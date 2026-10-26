@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#070b18">
+<title>Fotoalbum</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  .album { columns: 2 220px; column-gap: 12px; }
+  .album figure { break-inside: avoid; margin: 0 0 12px; border-radius: 16px; overflow: hidden; background: var(--glass); border: 1px solid var(--line); animation: pop .6s both; }
+  .album img { width: 100%; display: block; }
+  .album figcaption { padding: 8px 12px; font-size: .9em; }
+  @keyframes pop { from { opacity: 0; transform: translateY(20px) scale(.96); } }
+</style>
+</head>
+<body>
+<main class="board">
+  <div class="row"><a href="/" class="grow">← Terug</a><a href="/scorebord">🏆 Scorebord</a></div>
+  <h1 class="logo" style="margin-top:14px">Fotoalbum 📸</h1>
+  <div class="album" id="album"><p class="muted">Laden…</p></div>
+</main>
+<script src="/socket.io/socket.io.js"></script>
+<script src="/js/common.js"></script>
+<script>
+async function load() {
+  const { photos } = await App.api('/api/album');
+  document.getElementById('album').innerHTML = photos.map((p, i) => `
+    <figure style="animation-delay:${Math.min(i, 10) * .05}s"><a href="/foto/${p.id}" target="_blank"><img src="/foto/${p.id}" loading="lazy" alt=""></a>
+    <figcaption>${p.team ? `<span class="dot" style="background:${App.esc(p.team.color)}"></span> <b>${App.esc(p.team.name)}</b> · ` : ''}${App.esc(p.pointName)}</figcaption></figure>`).join('')
+    || '<p class="muted">Nog geen goedgekeurde foto\'s.</p>';
+}
+load();
+io().on('score', () => { clearTimeout(window.t); window.t = setTimeout(load, 1500); });
+</script>
+</body>
+</html>

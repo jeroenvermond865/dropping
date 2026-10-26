@@ -9,6 +9,9 @@ const FINISH_POINTS = [100, 60, 30];
 const MAX_TRIES = 3;
 const MAX_JOKERS = 3;
 const MIST_MS = 60 * 1000;
+const TREASURE_CLAIM_M = 25;        // zo dichtbij moet je zijn om een schat te pakken
+const MAX_EVENTS = 60;
+const MAX_TRAIL = 1500;
 
 function seed() {
   // Voorbeeldpunten rond Lunteren. De posities zijn een schatting:
@@ -21,6 +24,8 @@ function seed() {
       testMode: true,
       started: false,
       lastIsFinish: true,
+      treasureReveal: 100,
+      showPath: false,
     },
     points: [
       { id: id('p'), name: 'Start: Landgoed de Scheleberg', lat: 52.0455, lng: 5.6655, radius: 40, type: 'checkin',
@@ -45,9 +50,42 @@ function seed() {
     teams: [
       { id: id('t'), name: 'Team Vos', pin: '1234', color: '#ff7a3d', offset: 0 },
     ],
+    treasures: [],
+    paths: [],
+    photos: [],
+    events: [],
     progress: {},
     sessions: {},
   };
+}
+
+// Vult velden aan die in oudere opgeslagen spellen nog ontbreken.
+function migrate(state) {
+  for (const k of ['treasures', 'paths', 'photos', 'events', 'zones', 'teams', 'points']) state[k] = state[k] || [];
+  state.progress = state.progress || {};
+  state.sessions = state.sessions || {};
+  state.settings = { treasureReveal: 100, showPath: false, ...state.settings };
+  return state;
+}
+
+function event(state, text, teamId = null) {
+  state.events.unshift({ ts: Date.now(), text, teamId });
+  state.events.length = Math.min(state.events.length, MAX_EVENTS);
+}
+
+const teamName = (state, teamId) => (state.teams.find(t => t.id === teamId) || {}).name || 'Een team';
+
+function inZone(state, lat, lng) {
+  return state.zones.some(z => pointInPolygon([lat, lng], z.polygon));
+}
+
+function pointInPolygon(pt, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [yi, xi] = poly[i], [yj, xj] = poly[j];
+    if ((yi > pt[0]) !== (yj > pt[0]) && pt[1] < ((xj - xi) * (pt[0] - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
 }
 
 function normalize(s) {
@@ -117,6 +155,7 @@ function checkin(state, team, pos) {
   r.arrivePoints = ARRIVE_POINTS[Math.min(rank, ARRIVE_POINTS.length - 1)];
   r.rank = rank + 1;
   if (rank === 0 && state.teams.length > 1) pr.jokers = Math.min(MAX_JOKERS, (pr.jokers || 0) + 1);
+  if (rank === 0 && state.teams.length > 1) event(state, `🥇 ${team.name} is als eerste bij ${p.name}`, team.id);
   if (p.type === 'checkin') finishPoint(state, team, p, r, true);
   return { ok: true, rank: r.rank, first: rank === 0 };
 }
@@ -126,6 +165,7 @@ function answer(state, team, value) {
   if (!p) return { error: 'Geen open punt.' };
   const r = progressOf(state, team.id).results[p.id];
   if (!r || !r.arrivedAt) return { error: 'Eerst inchecken bij het punt.' };
+  if (p.type === 'foto') return { error: 'Maak een foto om dit punt af te ronden.' };
   let correct;
   if (p.type === 'opdracht') correct = true;
   else if (p.type === 'keuze') correct = Number(value) === Number(p.correct);
@@ -154,7 +194,121 @@ function finishPoint(state, team, p, r, correct) {
   const base = Number(p.points) || 100;
   r.answerPoints = correct ? Math.max(base - 25 * Math.max(0, (r.tries || 1) - 1), 25) - (r.hint ? state.settings.hintCost : 0) : 0;
   const pr = progressOf(state, team.id);
-  if (!currentPoint(state, team) && !pr.finishedAt) pr.finishedAt = Date.now();
+  if (!currentPoint(state, team) && !pr.finishedAt) {
+    pr.finishedAt = Date.now();
+    event(state, `🏁 ${team.name} is binnen!`, team.id);
+  }
+}
+
+// ---- foto-opdrachten ----
+
+// Het team kan meteen door; de punten komen pas als het beheer de foto goedkeurt.
+function submitPhoto(state, team, photoId) {
+  const p = currentPoint(state, team);
+  if (!p || p.type !== 'foto') return { error: 'Hier hoort geen foto bij.' };
+  const r = progressOf(state, team.id).results[p.id];
+  if (!r || !r.arrivedAt) return { error: 'Eerst inchecken bij het punt.' };
+  state.photos.unshift({ id: photoId, teamId: team.id, pointId: p.id, pointName: p.name, ts: Date.now(), status: 'wacht' });
+  r.tries = 1;
+  r.photoId = photoId;
+  finishPoint(state, team, p, r, true);
+  r.pendingPoints = r.answerPoints;
+  r.answerPoints = 0;
+  event(state, `📸 ${team.name} stuurde een foto bij ${p.name}`, team.id);
+  return { ok: true, letter: p.letter || '' };
+}
+
+function judgePhoto(state, photoId, approve) {
+  const ph = state.photos.find(x => x.id === photoId);
+  if (!ph) return { error: 'Foto niet gevonden.' };
+  ph.status = approve ? 'goed' : 'afgekeurd';
+  const r = state.progress[ph.teamId]?.results[ph.pointId];
+  if (r && r.photoId === photoId) {
+    r.answerPoints = approve ? (r.pendingPoints || 0) : 0;
+    r.correct = approve;
+  }
+  if (approve) event(state, `✅ Foto van ${teamName(state, ph.teamId)} goedgekeurd`, ph.teamId);
+  return { ok: true };
+}
+
+// ---- verborgen schatten ----
+
+function visibleTreasures(state, team) {
+  const pos = progressOf(state, team.id).pos;
+  const reveal = state.settings.treasureReveal || 100;
+  return state.treasures
+    .filter(t => (t.claims || {})[team.id] || (pos && distance(pos, t) <= reveal))
+    .map(t => ({ id: t.id, name: t.name, lat: t.lat, lng: t.lng, points: t.points, claimed: !!(t.claims || {})[team.id] }));
+}
+
+function claimTreasure(state, team, treasureId, pos) {
+  const t = state.treasures.find(x => x.id === treasureId);
+  if (!t) return { error: 'Deze schat bestaat niet meer.' };
+  t.claims = t.claims || {};
+  if (t.claims[team.id]) return { error: 'Deze schat hebben jullie al.' };
+  if (!state.settings.testMode) {
+    if (!pos || typeof pos.lat !== 'number') return { error: 'Geen gps-positie ontvangen.' };
+    const d = distance(pos, t);
+    if (d > TREASURE_CLAIM_M + Math.min(Number(pos.acc) || 0, 20)) return { error: `Nog ${Math.round(d)} meter naar de schat!` };
+  }
+  const first = !Object.keys(t.claims).length;
+  t.claims[team.id] = Date.now();
+  const pts = treasurePoints(t, team.id);
+  event(state, `💎 ${team.name} vond ${first ? 'als eerste ' : ''}de schat "${t.name}"`, team.id);
+  return { ok: true, points: pts, first };
+}
+
+// Eerste vinder krijgt alles, latere vinders de helft.
+function treasurePoints(t, teamId) {
+  const claims = Object.entries(t.claims || {}).sort((a, b) => a[1] - b[1]);
+  const i = claims.findIndex(([id]) => id === teamId);
+  if (i < 0) return 0;
+  return i === 0 ? Number(t.points) || 0 : Math.round((Number(t.points) || 0) / 2);
+}
+
+// Zet schatten verspreid langs de getekende looproutes, nooit in een verboden zone.
+function scatterTreasures(state, count, points) {
+  const lines = state.paths.map(p => p.line).filter(l => l.length > 1);
+  if (!lines.length) return { error: 'Teken eerst een looproute (tabblad Route).' };
+  const segs = [];
+  let total = 0;
+  for (const l of lines) for (let i = 1; i < l.length; i++) {
+    const a = { lat: l[i - 1][0], lng: l[i - 1][1] }, b = { lat: l[i][0], lng: l[i][1] };
+    const len = distance(a, b);
+    segs.push({ a, b, len, start: total });
+    total += len;
+  }
+  const made = [];
+  for (let k = 0; k < count; k++) {
+    // gelijkmatig verdeeld, met een beetje toeval, niet aan het begin of eind
+    let at = total * ((k + 0.5 + (Math.random() - 0.5) * 0.6) / count);
+    let tries = 0, pos = null;
+    while (tries++ < 20) {
+      const s = segs.find(x => at >= x.start && at <= x.start + x.len) || segs[segs.length - 1];
+      const f = s.len ? (at - s.start) / s.len : 0;
+      const c = { lat: s.a.lat + (s.b.lat - s.a.lat) * f, lng: s.a.lng + (s.b.lng - s.a.lng) * f };
+      if (!inZone(state, c.lat, c.lng)) { pos = c; break; }
+      at = (at + 40) % total;
+    }
+    if (!pos) continue;
+    const t = { id: id('s'), name: `Schat ${state.treasures.length + 1}`, lat: pos.lat, lng: pos.lng, points: points, claims: {} };
+    state.treasures.push(t);
+    made.push(t);
+  }
+  return { ok: true, made: made.length };
+}
+
+function recordPos(state, team, pos) {
+  const pr = progressOf(state, team.id);
+  const before = visibleTreasures(state, team).length;
+  pr.pos = { ...pos, ts: Date.now() };
+  pr.trail = pr.trail || [];
+  const last = pr.trail[pr.trail.length - 1];
+  if (!last || Date.now() - last[2] > 20000 || distance(pos, { lat: last[0], lng: last[1] }) > 30) {
+    pr.trail.push([+pos.lat.toFixed(6), +pos.lng.toFixed(6), Date.now()]);
+    if (pr.trail.length > MAX_TRAIL) pr.trail.splice(0, pr.trail.length - MAX_TRAIL);
+  }
+  return visibleTreasures(state, team).length !== before; // nieuwe schat in zicht?
 }
 
 function useHint(state, team) {
@@ -206,6 +360,8 @@ function teamView(state, team) {
     done, letters, jokers: pr.jokers || 0, mistUntil: pr.mistUntil || 0,
     finished: !!pr.finishedAt, score: row ? row.score : 0, rank: row ? row.rank : null,
     zones: state.zones,
+    paths: state.settings.showPath ? state.paths : [],
+    treasures: visibleTreasures(state, team),
     others: state.teams.filter(t => t.id !== team.id).map(t => ({ id: t.id, name: t.name, color: t.color })),
   };
 }
@@ -223,7 +379,11 @@ function scoreboard(state) {
       if (x.correct) solved++;
       if (x.correct && p.type !== 'checkin' && x.doneAt) times.push(x.doneAt - x.arrivedAt);
     }
-    return { id: t.id, name: t.name, color: t.color, score, solved, firsts, fastest: 0,
+    let treasures = 0;
+    for (const tr of state.treasures) {
+      if ((tr.claims || {})[t.id]) { treasures++; score += treasurePoints(tr, t.id); }
+    }
+    return { id: t.id, name: t.name, color: t.color, score, solved, firsts, fastest: 0, treasures,
       avgAnswerMs: times.length ? Math.round(times.reduce((a, b) => a + b, 0) / times.length) : null,
       done: r.filter(p => pr.results[p.id]?.done).length, total: r.length,
       finishedAt: pr.finishedAt || null, pos: pr.pos || null };
@@ -257,7 +417,24 @@ function adminView(state) {
   return { ...rest, scoreboard: scoreboard(state) };
 }
 
+function tvView(state) {
+  return {
+    title: state.settings.title,
+    teams: state.teams.map(t => {
+      const pr = state.progress[t.id] || {};
+      return { id: t.id, name: t.name, color: t.color, pos: pr.pos || null, trail: pr.trail || [] };
+    }),
+    points: state.points.map(p => ({ id: p.id, name: p.name, lat: p.lat, lng: p.lng })),
+    treasures: state.treasures.map(t => ({ id: t.id, lat: t.lat, lng: t.lng, found: Object.keys(t.claims || {}).length })),
+    zones: state.zones, paths: state.paths,
+    scoreboard: scoreboard(state).map(({ pos, ...r }) => r),
+    events: state.events.slice(0, 15),
+    photos: state.photos.filter(p => p.status === 'goed').slice(0, 12),
+  };
+}
+
 module.exports = {
-  id, seed, distance, route, currentPoint, progressOf,
-  checkin, answer, useHint, sendMist, teamView, scoreboard, adminView,
+  id, seed, migrate, event, distance, inZone, route, currentPoint, progressOf,
+  checkin, answer, useHint, sendMist, submitPhoto, judgePhoto, claimTreasure, scatterTreasures, recordPos,
+  teamView, scoreboard, adminView, tvView,
 };

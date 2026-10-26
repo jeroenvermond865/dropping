@@ -14,7 +14,8 @@ const server = http.createServer(app);
 const io = new Server(server);
 let state;
 
-app.use(express.json({ limit: '200kb' }));
+const smallJson = express.json({ limit: '200kb' });
+app.use((req, res, next) => (req.path === '/api/photo' ? next() : smallJson(req, res, next)));
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
 app.use('/vendor/leaflet', express.static(path.join(__dirname, 'node_modules/leaflet/dist'), { maxAge: '7d' }));
 app.use('/vendor/three', express.static(path.join(__dirname, 'node_modules/three/build'), { maxAge: '7d' }));
@@ -28,6 +29,7 @@ function changed() {
 
 function broadcast() {
   io.to('admin').emit('admin', game.adminView(state));
+  io.to('tv').emit('tv', game.tvView(state));
   io.to('score').emit('score', publicScore());
   for (const t of state.teams) io.to('team:' + t.id).emit('view', game.teamView(state, t));
 }
@@ -107,29 +109,69 @@ app.post('/api/answer', ...teamAction(req => game.answer(state, req.team, clean(
 app.post('/api/hint', ...teamAction(req => game.useHint(state, req.team)));
 app.post('/api/mist', ...teamAction(req => {
   const out = game.sendMist(state, req.team, req.body.teamId);
-  if (out.ok) io.to('team:' + out.target.id).emit('mist', { from: req.team.name });
+  if (out.ok) {
+    io.to('team:' + out.target.id).emit('mist', { from: req.team.name });
+    game.event(state, `🌫️ ${req.team.name} stuurde mist naar ${out.target.name}`, req.team.id);
+  }
   return out.ok ? { ok: true } : out;
 }));
 
 app.post('/api/pos', teamAuth, (req, res) => {
   const lat = num(req.body.lat, null), lng = num(req.body.lng, null);
   if (lat === null || lng === null) return res.status(400).json({ error: 'Ongeldige positie.' });
-  game.progressOf(state, req.team.id).pos = { lat, lng, acc: num(req.body.acc, 0), ts: Date.now() };
-  store.save(state);
-  io.to('admin').emit('pos', { teamId: req.team.id, lat, lng, ts: Date.now() });
+  const newTreasure = game.recordPos(state, req.team, { lat, lng, acc: num(req.body.acc, 0) });
+  if (newTreasure) changed();
+  else {
+    store.save(state);
+    io.to('admin').emit('pos', { teamId: req.team.id, lat, lng, ts: Date.now() });
+    io.to('tv').emit('pos', { teamId: req.team.id, lat, lng, ts: Date.now() });
+  }
   res.json({ ok: true });
+});
+
+app.post('/api/treasure/:id', ...teamAction(req => game.claimTreasure(state, req.team, req.params.id, {
+  lat: num(req.body.lat, null), lng: num(req.body.lng, null), acc: num(req.body.acc, 0),
+})));
+
+app.post('/api/photo', express.json({ limit: '6mb' }), teamAuth, async (req, res) => {
+  const p = game.currentPoint(state, req.team);
+  const r = p && game.progressOf(state, req.team.id).results[p.id];
+  if (!p || p.type !== 'foto' || !r || !r.arrivedAt) return res.status(400).json({ error: 'Hier hoort geen foto bij.' });
+  const m = /^data:image\/jpeg;base64,(.+)$/.exec(String(req.body.data || ''));
+  const buf = m && Buffer.from(m[1], 'base64');
+  if (!buf || buf.length < 1000 || buf[0] !== 0xff || buf[1] !== 0xd8) return res.status(400).json({ error: 'Dat is geen goede foto.' });
+  const photoId = crypto.randomBytes(12).toString('hex');
+  try { await store.savePhoto(photoId, buf); }
+  catch (e) { console.error('Foto opslaan mislukt:', e.message); return res.status(500).json({ error: 'Foto opslaan mislukt, probeer opnieuw.' }); }
+  const out = game.submitPhoto(state, req.team, photoId);
+  if (out.error) return res.status(400).json(out);
+  changed();
+  res.json(out);
+});
+
+app.get('/foto/:id', async (req, res) => {
+  if (!/^[0-9a-f]{24}$/.test(req.params.id)) return res.sendStatus(404);
+  const buf = await store.getPhoto(req.params.id).catch(() => null);
+  if (!buf) return res.sendStatus(404);
+  res.set({ 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=604800' }).send(buf);
+});
+
+app.get('/api/album', (req, res) => {
+  res.json({ title: state.settings.title, photos: state.photos.filter(p => p.status === 'goed').map(p => ({ ...p, team: state.teams.find(t => t.id === p.teamId) || null })) });
 });
 
 // ---- beheer ----
 
 app.get('/api/admin/state', adminAuth, (req, res) => res.json(game.adminView(state)));
 
-const POINT_TYPES = ['checkin', 'vraag', 'keuze', 'opdracht'];
+const POINT_TYPES = ['checkin', 'vraag', 'keuze', 'opdracht', 'foto'];
+const ZONE_ERROR = { error: 'Dit ligt in een verboden gebied (bos). Kies een plek erbuiten.' };
 
 app.post('/api/admin/point', adminAuth, (req, res) => {
   const b = req.body;
   const lat = num(b.lat, null), lng = num(b.lng, null);
   if (lat === null || lng === null) return res.status(400).json({ error: 'Positie ontbreekt.' });
+  if (game.inZone(state, lat, lng)) return res.status(400).json(ZONE_ERROR);
   const point = {
     id: b.id && state.points.some(p => p.id === b.id) ? b.id : game.id('p'),
     name: clean(b.name, 80) || 'Nieuw punt',
@@ -161,6 +203,57 @@ app.post('/api/admin/order', adminAuth, (req, res) => {
   state.points = [...ordered, ...state.points.filter(p => !ids.includes(p.id))];
   changed();
   res.json({ ok: true });
+});
+
+app.post('/api/admin/treasure', adminAuth, (req, res) => {
+  const b = req.body;
+  const lat = num(b.lat, null), lng = num(b.lng, null);
+  if (lat === null || lng === null) return res.status(400).json({ error: 'Positie ontbreekt.' });
+  if (game.inZone(state, lat, lng)) return res.status(400).json(ZONE_ERROR);
+  const old = state.treasures.find(t => t.id === b.id);
+  const t = { id: old ? old.id : game.id('s'), name: clean(b.name, 60) || 'Schat', lat, lng,
+    points: Math.min(Math.max(num(b.points, 50), 0), 1000), claims: old ? old.claims : {} };
+  if (old) Object.assign(old, t); else state.treasures.push(t);
+  changed();
+  res.json(t);
+});
+
+app.delete('/api/admin/treasure/:id', adminAuth, (req, res) => {
+  state.treasures = state.treasures.filter(t => t.id !== req.params.id);
+  changed();
+  res.json({ ok: true });
+});
+
+app.post('/api/admin/scatter', adminAuth, (req, res) => {
+  const out = game.scatterTreasures(state, Math.min(Math.max(Math.floor(num(req.body.count, 5)), 1), 30), Math.min(Math.max(num(req.body.points, 50), 0), 1000));
+  if (out.error) return res.status(400).json(out);
+  changed();
+  res.json(out);
+});
+
+app.post('/api/admin/path', adminAuth, (req, res) => {
+  const b = req.body;
+  const line = (Array.isArray(b.line) ? b.line : [])
+    .map(c => [num(c[0], null), num(c[1], null)]).filter(c => c[0] !== null && c[1] !== null);
+  if (line.length < 2) return res.status(400).json({ error: 'Een route heeft minstens 2 punten nodig.' });
+  const path_ = { id: b.id && state.paths.some(p => p.id === b.id) ? b.id : game.id('r'), name: clean(b.name, 80) || 'Looproute', line };
+  const i = state.paths.findIndex(p => p.id === path_.id);
+  if (i >= 0) state.paths[i] = path_; else state.paths.push(path_);
+  changed();
+  res.json(path_);
+});
+
+app.delete('/api/admin/path/:id', adminAuth, (req, res) => {
+  state.paths = state.paths.filter(p => p.id !== req.params.id);
+  changed();
+  res.json({ ok: true });
+});
+
+app.post('/api/admin/photo/:id', adminAuth, (req, res) => {
+  const out = game.judgePhoto(state, req.params.id, !!req.body.approve);
+  if (out.error) return res.status(400).json(out);
+  changed();
+  res.json(out);
 });
 
 app.post('/api/admin/team', adminAuth, (req, res) => {
@@ -212,6 +305,8 @@ app.post('/api/admin/settings', adminAuth, (req, res) => {
   if (b.testMode !== undefined) s.testMode = !!b.testMode;
   if (b.started !== undefined) s.started = !!b.started;
   if (b.lastIsFinish !== undefined) s.lastIsFinish = !!b.lastIsFinish;
+  if (b.treasureReveal !== undefined) s.treasureReveal = Math.min(Math.max(num(b.treasureReveal, 100), 20), 1000);
+  if (b.showPath !== undefined) s.showPath = !!b.showPath;
   changed();
   res.json(s);
 });
@@ -229,8 +324,17 @@ app.post('/api/admin/skip/:teamId', adminAuth, (req, res) => {
 });
 
 app.post('/api/admin/reset', adminAuth, (req, res) => {
-  if (req.body.teamId) delete state.progress[req.body.teamId];
-  else state.progress = {};
+  const teamId = req.body.teamId;
+  if (teamId) {
+    delete state.progress[teamId];
+    for (const t of state.treasures) if (t.claims) delete t.claims[teamId];
+    state.photos = state.photos.filter(p => p.teamId !== teamId);
+  } else {
+    state.progress = {};
+    for (const t of state.treasures) t.claims = {};
+    state.photos = [];
+    state.events = [];
+  }
   changed();
   res.json({ ok: true });
 });
@@ -240,7 +344,10 @@ app.post('/api/admin/reset', adminAuth, (req, res) => {
 io.on('connection', socket => {
   const token = socket.handshake.auth && socket.handshake.auth.token;
   const s = token && state.sessions[token];
-  if (s && s.type === 'admin') {
+  if (s && s.type === 'admin' && socket.handshake.auth.tv) {
+    socket.join('tv');
+    socket.emit('tv', game.tvView(state));
+  } else if (s && s.type === 'admin') {
     socket.join('admin');
     socket.emit('admin', game.adminView(state));
   } else if (s && s.type === 'team' && state.teams.some(t => t.id === s.teamId)) {
@@ -255,8 +362,7 @@ io.on('connection', socket => {
 setInterval(broadcast, 30000);
 
 (async () => {
-  state = (await store.init()) || game.seed();
-  state.sessions = state.sessions || {};
+  state = game.migrate((await store.init()) || game.seed());
   store.save(state);
   server.listen(PORT, () => console.log(`Dropping draait op poort ${PORT} (${store.usesDatabase() ? 'Postgres' : 'bestand'})`));
 })();

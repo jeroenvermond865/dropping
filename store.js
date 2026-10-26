@@ -14,6 +14,7 @@ async function init() {
       ssl: process.env.DATABASE_URL.includes('localhost') ? false : { rejectUnauthorized: false },
     });
     await pool.query('CREATE TABLE IF NOT EXISTS dropping_state (id TEXT PRIMARY KEY, data JSONB NOT NULL, updated TIMESTAMPTZ DEFAULT now())');
+    await pool.query('CREATE TABLE IF NOT EXISTS dropping_photos (id TEXT PRIMARY KEY, data BYTEA NOT NULL, created TIMESTAMPTZ DEFAULT now())');
     const r = await pool.query("SELECT data FROM dropping_state WHERE id = 'game'");
     return r.rows[0] ? r.rows[0].data : null;
   }
@@ -55,4 +56,21 @@ async function flush() {
   }
 }
 
-module.exports = { init, save, flush, usesDatabase: () => !!pool };
+// Foto's staan los van de spelstatus, zodat die klein blijft.
+const PHOTO_DIR = path.join(__dirname, 'data', 'photos');
+
+async function savePhoto(id, buf) {
+  if (pool) return pool.query('INSERT INTO dropping_photos (id, data) VALUES ($1, $2)', [id, buf]);
+  fs.mkdirSync(PHOTO_DIR, { recursive: true });
+  fs.writeFileSync(path.join(PHOTO_DIR, id + '.jpg'), buf);
+}
+
+async function getPhoto(id) {
+  if (pool) {
+    const r = await pool.query('SELECT data FROM dropping_photos WHERE id = $1', [id]);
+    return r.rows[0] ? r.rows[0].data : null;
+  }
+  try { return fs.readFileSync(path.join(PHOTO_DIR, id + '.jpg')); } catch { return null; }
+}
+
+module.exports = { init, save, flush, savePhoto, getPhoto, usesDatabase: () => !!pool };

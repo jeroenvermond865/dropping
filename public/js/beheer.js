@@ -4,6 +4,8 @@
   const api = (path, body, method) => App.api(path, body, 'adminToken', method);
   const TYPES = { checkin: 'Alleen inchecken', vraag: 'Open vraag', keuze: 'Meerkeuze', opdracht: 'Opdracht (gedaan-knop)', foto: 'Foto-opdracht' };
 
+  const mapReadyFns = [];
+  const map_ready = f => (map ? f() : mapReadyFns.push(f));
   let state = null, tab = 'punten', selected = null, mode = null, draft = [], map, socket;
   const layers = {};
 
@@ -54,6 +56,7 @@
     layers.paths = L.layerGroup().addTo(map);
     layers.treasures = L.layerGroup().addTo(map);
     map.on('click', onMapClick);
+    mapReadyFns.forEach(f => f());
     if (state.points.length) map.fitBounds(L.latLngBounds(state.points.map(p => [p.lat, p.lng])).pad(0.2));
     setTimeout(() => map.invalidateSize(), 100);
   }
@@ -66,6 +69,7 @@
   }
 
   async function onMapClick(e) {
+    if (e.forced) { setMode(e.forced); if (searchMarker) searchMarker.remove(); }
     if (mode === 'point') {
       setMode(null);
       try {
@@ -168,6 +172,49 @@
     layers.draft.clearLayers();
     if (draft.length) L.polyline(mode === 'path' ? draft : [...draft, draft[0]], { color: mode === 'path' && lineCrossesZone(draft) ? '#ff5470' : '#ffc44d', weight: 3, dashArray: '4 6' }).addTo(layers.draft);
     draft.forEach(c => L.circleMarker(c, { radius: 5, color: '#ffc44d' }).addTo(layers.draft));
+  }
+
+  // ---- zoeken ----
+  let searchTimer, searchMarker;
+  $('search').oninput = () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(doSearch, 450);
+  };
+  $('search').onkeydown = e => { if (e.key === 'Enter') { clearTimeout(searchTimer); doSearch(); } if (e.key === 'Escape') hideResults(); };
+  const hideResults = () => { $('results').style.display = 'none'; };
+  map_ready(() => map.on('click', hideResults));
+
+  async function doSearch() {
+    const q = $('search').value.trim();
+    const box = $('results');
+    if (q.length < 2) return hideResults();
+    // Coördinaten direct invullen, bijvoorbeeld "52.0601, 5.6612"
+    const m = /^(-?\d+[.,]\d+)\s*[,; ]\s*(-?\d+[.,]\d+)$/.exec(q);
+    if (m) return goTo(Number(m[1].replace(',', '.')), Number(m[2].replace(',', '.')), 'Coördinaten');
+    box.style.display = 'block';
+    box.innerHTML = '<button disabled>Zoeken…</button>';
+    try {
+      const res = await api('/api/admin/zoek?q=' + encodeURIComponent(q));
+      box.innerHTML = res.map((r, i) => `<button data-i="${i}">${esc(r.name)}</button>`).join('') || '<button disabled>Niets gevonden</button>';
+      box.querySelectorAll('[data-i]').forEach(b => { b.onclick = () => { const r = res[b.dataset.i]; goTo(r.lat, r.lng, r.name.split(',').slice(0, 2).join(',')); }; });
+    } catch (e) { box.innerHTML = `<button disabled>${esc(e.message)}</button>`; }
+  }
+
+  function goTo(lat, lng, name) {
+    hideResults();
+    map.setView([lat, lng], 17);
+    if (searchMarker) searchMarker.remove();
+    searchMarker = L.marker([lat, lng], { icon: L.divIcon({ className: '', html: '<div class="search-pin">📌</div>', iconSize: [30, 30], iconAnchor: [8, 30] }) }).addTo(map);
+    const html = `<b>${esc(name)}</b><div class="row wrap" style="margin-top:8px">
+      <button class="btn small" id="spPoint">📍 Punt hier</button><button class="btn small" id="spTreasure">💎 Schat hier</button></div>`;
+    searchMarker.bindPopup(html, { autoPanPaddingTopLeft: [20, 90] }).openPopup();
+    searchMarker.on('popupopen', bindPopup);
+    bindPopup();
+    function bindPopup() {
+      const p = $('spPoint'), t = $('spTreasure');
+      if (p) p.onclick = () => onMapClick({ latlng: { lat, lng }, forced: 'point' });
+      if (t) t.onclick = () => onMapClick({ latlng: { lat, lng }, forced: 'treasure' });
+    }
   }
 
   // ---- tabbladen ----

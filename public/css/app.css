@@ -181,6 +181,15 @@ input[type=color] { padding: 2px; height: 42px; }
 .treasure-marker.claimed { filter: grayscale(1); opacity: .5; animation: none; }
 @keyframes bob { 50% { transform: translateY(-5px) scale(1.1); } }
 
+/* zoeken op de beheerkaart */
+.map-search { position: absolute; top: 10px; left: 56px; right: 64px; max-width: 420px; z-index: 900; }
+.map-search input { background: var(--glass); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); box-shadow: var(--shadow); }
+.search-results { margin-top: 6px; border-radius: 12px; overflow: hidden; background: var(--bg2); border: 1px solid var(--line); box-shadow: var(--shadow); display: none; }
+.search-results button { display: block; width: 100%; text-align: left; padding: 10px 12px; border: 0; border-top: 1px solid var(--line); background: transparent; cursor: pointer; font-size: .9em; }
+.search-results button:first-child { border-top: 0; }
+.search-results button:hover { background: rgba(77, 210, 255, .12); }
+.search-pin { font-size: 30px; filter: drop-shadow(0 4px 6px rgba(0, 0, 0, .6)); }
+
 /* hoeken van een zone bewerken */
 .vtx { width: 24px; height: 24px; border-radius: 50%; background: #ffc44d; border: 3px solid #fff; box-shadow: 0 2px 8px rgba(0, 0, 0, .5); cursor: grab; }
 .vtx.sel { background: var(--bad); transform: scale(1.2); }

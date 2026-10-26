@@ -163,6 +163,32 @@ app.get('/api/album', (req, res) => {
 
 // ---- beheer ----
 
+// Locaties zoeken via OpenStreetMap (Nominatim), met voorkeur voor de buurt van Lunteren.
+const searchCache = new Map();
+let lastSearch = 0;
+app.get('/api/admin/zoek', adminAuth, async (req, res) => {
+  const q = clean(req.query.q, 120).trim();
+  if (q.length < 2) return res.json([]);
+  if (searchCache.has(q)) return res.json(searchCache.get(q));
+  // Nominatim staat maximaal 1 verzoek per seconde toe
+  const wait = lastSearch + 1100 - Date.now();
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  lastSearch = Date.now();
+  try {
+    const url = 'https://nominatim.openstreetmap.org/search?' + new URLSearchParams({
+      q, format: 'jsonv2', limit: '7', countrycodes: 'nl', 'accept-language': 'nl', viewbox: '5.55,52.12,5.78,52.00', bounded: '0',
+    });
+    const r = await fetch(url, { headers: { 'User-Agent': 'dropping-familieweekend/1.0 (https://dropping.onrender.com)' } });
+    if (!r.ok) throw new Error('status ' + r.status);
+    const out = (await r.json()).map(x => ({ name: x.display_name, lat: Number(x.lat), lng: Number(x.lon), type: x.type }));
+    searchCache.set(q, out);
+    res.json(out);
+  } catch (e) {
+    console.error('Zoeken mislukt:', e.message);
+    res.status(502).json({ error: 'Zoeken lukt nu even niet.' });
+  }
+});
+
 app.get('/api/admin/state', adminAuth, (req, res) => res.json(game.adminView(state)));
 
 const POINT_TYPES = ['checkin', 'vraag', 'keuze', 'opdracht', 'foto'];

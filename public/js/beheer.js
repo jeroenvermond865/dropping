@@ -92,7 +92,10 @@
     $('title').textContent = state.settings.title;
     layers.zones.clearLayers();
     for (const z of state.zones) {
-      L.polygon(z.polygon, { color: '#ff5470', weight: 2, fillOpacity: 0.2, dashArray: '6 6' }).bindTooltip(esc(z.name)).addTo(layers.zones);
+      L.polygon(z.polygon, { color: '#ff5470', weight: 2, fillOpacity: 0.2, dashArray: '6 6' })
+        .bindTooltip(esc(z.name) + ' · tik om de vorm aan te passen')
+        .on('click', () => { if (!mode) { tab = 'zones'; renderTab(); editZoneShape(z); } })
+        .addTo(layers.zones);
     }
     layers.points.clearLayers();
     const pts = state.points;
@@ -435,8 +438,11 @@
   function editZoneShape(zone) {
     const poly = zone.polygon.map(c => [...c]);
     let sel = null;
-    map.fitBounds(poly, { padding: [40, 40] });
-    setMode('zoneEdit', 'Sleep de hoeken · tik ＋ voor een extra hoek · <button class="btn small" id="zDel">Hoek weg</button> <button class="btn small" id="zSave">Opslaan</button> <button class="btn ghost small" id="zCancel">Stop</button>');
+    document.body.classList.add('editing');
+    scrollTo(0, 0);
+    map.invalidateSize();
+    setMode('zoneEdit', '<div style="font-size:.85em;margin-bottom:6px">Sleep de gele bolletjes · tik ＋ voor een extra hoek</div><button class="btn small" id="zDel">Hoek weg</button> <button class="btn small" id="zSave">Opslaan</button> <button class="btn ghost small" id="zCancel">Stop</button>');
+    map.fitBounds(poly, { paddingTopLeft: [30, 30], paddingBottomRight: [30, 110], animate: false });
     const shape = L.polygon(poly, { color: '#ffc44d', weight: 3, fillOpacity: 0.15, interactive: false });
     function redraw() {
       layers.draft.clearLayers();
@@ -454,7 +460,7 @@
       });
     }
     redraw();
-    const stop = () => { layers.draft.clearLayers(); setMode(null); };
+    const stop = () => { layers.draft.clearLayers(); setMode(null); document.body.classList.remove('editing'); map.invalidateSize(); };
     $('zDel').onclick = e => {
       e.stopPropagation();
       if (sel == null) return App.toast('Tik eerst een hoek aan');

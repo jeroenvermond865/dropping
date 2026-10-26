@@ -16,7 +16,8 @@ let state;
 
 const smallJson = express.json({ limit: '200kb' });
 app.use((req, res, next) => (req.path === '/api/photo' ? next() : smallJson(req, res, next)));
-app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
+// Altijd de nieuwste versie laten ophalen, ook op telefoons die agressief cachen.
+app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'], setHeaders: res => res.setHeader('Cache-Control', 'no-cache') }));
 app.use('/vendor/leaflet', express.static(path.join(__dirname, 'node_modules/leaflet/dist'), { maxAge: '7d' }));
 app.use('/vendor/three', express.static(path.join(__dirname, 'node_modules/three/build'), { maxAge: '7d' }));
 

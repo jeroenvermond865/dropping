@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#070b18">
+<title>Beheer dropping</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<div id="login" class="login-wrap" style="justify-content:center;display:none">
+  <h1 class="logo">Beheer</h1>
+  <div class="card stack">
+    <div><label for="adminPin">Beheerpincode</label><input id="adminPin" type="password" autocomplete="current-password"></div>
+    <button class="btn block" id="adminGo">Inloggen</button>
+    <a href="/">← Terug</a>
+  </div>
+</div>
+
+<div class="admin" id="admin" style="display:none">
+  <div style="position:relative">
+    <div id="map" style="height:100%"></div>
+    <div class="mode-banner" id="banner"></div>
+  </div>
+  <aside class="panel">
+    <div class="row" style="margin-bottom:10px">
+      <h2 class="grow" style="margin:0" id="title">Beheer</h2>
+      <a class="btn ghost small" href="/scorebord" target="_blank">🏆</a>
+      <button class="btn ghost small" id="logout">Uit</button>
+    </div>
+    <div class="tabs" id="tabs">
+      <button data-tab="punten" class="on">📍 Punten</button>
+      <button data-tab="teams">👥 Teams</button>
+      <button data-tab="zones">⛔ Zones</button>
+      <button data-tab="live">📡 Live</button>
+      <button data-tab="instellingen">⚙️</button>
+    </div>
+    <div id="tab"></div>
+  </aside>
+</div>
+<script src="/vendor/leaflet/leaflet.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+<script src="/js/common.js"></script>
+<script src="/js/beheer.js"></script>
+</body>
+</html>

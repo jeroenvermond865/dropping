@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#070b18">
+<title>Dropping</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<div class="game">
+  <div id="map"></div>
+  <div class="compass-only" id="compassOnly">
+    <div class="muted">🧭 Kompasmodus: geen kaart, alleen de pijl!</div>
+    <div class="dist" data-dist>–</div>
+    <div class="compass"><div class="arrow" data-arrow></div></div>
+  </div>
+  <div class="mist" id="mist"></div>
+
+  <div class="hud">
+    <div class="hud-top">
+      <div class="hud-chip" id="teamChip">…</div>
+      <div class="row">
+        <button class="hud-chip" id="jokerBtn" style="display:none" title="Stuur mist naar een ander team">🌫️ <span id="jokers">0</span></button>
+        <div class="hud-chip" id="scoreChip">0 pt</div>
+        <button class="hud-chip" id="menuBtn" aria-label="Menu">☰</button>
+      </div>
+    </div>
+    <div class="card nav-card" id="navCard">
+      <div class="compass" id="compassSmall"><div class="arrow" data-arrow></div></div>
+      <div class="grow">
+        <div class="muted" id="pointNr" style="font-size:.85em">Punt</div>
+        <div class="dist" data-dist>–</div>
+        <div class="muted" id="gpsInfo" style="font-size:.8em">GPS zoeken…</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="zone-alert" id="zoneAlert">⛔ Je loopt in een verboden gebied!<br><span style="font-weight:500">Ga terug naar de weg.</span></div>
+
+  <div class="sheet"><div class="card stack" id="sheet">Laden…</div></div>
+</div>
+
+<div class="reveal" id="reveal">
+  <div class="flip">
+    <div class="face front">📍</div>
+    <div class="face back">
+      <div class="muted">Volgende punt</div>
+      <h2 id="revealName" style="font-size:1.8rem"></h2>
+      <p id="revealIntro"></p>
+      <button class="btn" id="revealGo">Op pad!</button>
+    </div>
+  </div>
+</div>
+
+<script src="/vendor/leaflet/leaflet.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+<script src="/js/common.js"></script>
+<script src="/js/spel.js"></script>
+</body>
+</html>

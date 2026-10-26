@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#070b18">
+<title>Dropping</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<canvas id="scene"></canvas>
+<main class="login-wrap">
+  <h1 class="logo" id="title">Dropping</h1>
+  <p class="muted" style="margin:0 0 18px">Kies je team, voer de pincode in en volg de lichtjes in het donker.</p>
+  <div class="card stack">
+    <div class="teams" id="teams"><span class="muted">Teams laden…</span></div>
+    <div>
+      <label for="pin">Pincode</label>
+      <input id="pin" class="pin" inputmode="numeric" autocomplete="off" maxlength="12" placeholder="••••">
+    </div>
+    <button class="btn block" id="go" disabled>Start de tocht</button>
+  </div>
+  <div class="row" style="justify-content:center;gap:18px;margin-top:16px">
+    <a href="/scorebord">🏆 Scorebord</a>
+    <a href="/beheer">🛠️ Beheer</a>
+  </div>
+</main>
+<script src="/vendor/three/three.min.js"></script>
+<script src="/js/common.js"></script>
+<script src="/js/scene.js"></script>
+<script>
+(async () => {
+  if (App.store.get('teamToken')) {
+    try { await App.api('/api/me'); location.href = '/spel'; return; } catch { App.store.set('teamToken', null); }
+  }
+  let chosen = null;
+  const teamsEl = document.getElementById('teams');
+  const go = document.getElementById('go');
+  const pin = document.getElementById('pin');
+  const update = () => { go.disabled = !(chosen && pin.value.trim()); };
+  try {
+    const { title, teams } = await App.api('/api/teams');
+    document.getElementById('title').textContent = title;
+    document.title = title;
+    teamsEl.innerHTML = '';
+    for (const t of teams) {
+      const b = document.createElement('button');
+      b.className = 'team-btn';
+      b.innerHTML = `<span class="dot" style="background:${App.esc(t.color)}"></span> <b>${App.esc(t.name)}</b>`;
+      b.onclick = () => {
+        chosen = t.id;
+        teamsEl.querySelectorAll('.team-btn').forEach(x => x.classList.toggle('sel', x === b));
+        pin.focus();
+        update();
+      };
+      teamsEl.appendChild(b);
+    }
+    if (teams.length === 1) teamsEl.firstChild.click();
+    if (!teams.length) teamsEl.innerHTML = '<span class="muted">Nog geen teams. Maak ze aan in het beheer.</span>';
+  } catch (e) { teamsEl.textContent = e.message; }
+  pin.oninput = update;
+  pin.onkeydown = e => { if (e.key === 'Enter' && !go.disabled) go.click(); };
+  go.onclick = async () => {
+    go.disabled = true;
+    try {
+      const { token } = await App.api('/api/login', { teamId: chosen, pin: pin.value });
+      App.store.set('teamToken', token);
+      location.href = '/spel';
+    } catch (e) { App.toast(e.message, 'bad'); App.buzz(200); update(); }
+  };
+})();
+</script>
+</body>
+</html>

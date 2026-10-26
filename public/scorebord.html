@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#070b18">
+<title>Scorebord</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<main class="board">
+  <div class="row"><a href="/" class="grow">← Terug</a><span class="pill" id="live">● live</span></div>
+  <h1 class="logo" style="margin-top:14px" id="title">Scorebord</h1>
+  <div class="podium" id="podium"></div>
+  <div class="card table-scroll">
+    <table class="score-table">
+      <thead><tr><th>#</th><th>Team</th><th>Punten</th><th title="Juist opgelost">✅</th><th title="Als eerste bij een punt">🥇</th><th title="Snelste antwoord op een punt">⚡</th><th title="Gemiddelde antwoordtijd">⏱️</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <p class="muted" style="font-size:.85em">🥇 eerste bij een punt (50, 30, 20 pt) · ✅ goed antwoord (tot 100 pt, minder bij meer pogingen of een hint) · ⚡ snelste antwoord +25 · finish 100/60/30 pt</p>
+</main>
+<script src="/socket.io/socket.io.js"></script>
+<script src="/js/common.js"></script>
+<script>
+const prev = {};
+function render({ title, rows }) {
+  document.getElementById('title').textContent = title + ' 🏆';
+  const order = [1, 0, 2], heights = [130, 90, 65], medals = ['🥇', '🥈', '🥉'];
+  document.getElementById('podium').innerHTML = order.filter(i => rows[i]).map(i => `
+    <div class="step"><div class="name">${App.esc(rows[i].name)}</div>
+    <div class="block" style="height:${heights[i]}px;background:linear-gradient(160deg,${App.esc(rows[i].color)},#1a2350);animation-delay:${i * .15}s">${medals[i]}</div>
+    <div style="margin-top:6px;font-weight:700">${rows[i].score} pt</div></div>`).join('');
+  document.getElementById('rows').innerHTML = rows.map(r => `
+    <tr class="${prev[r.id] !== undefined && prev[r.id] !== r.score ? 'flash' : ''}">
+      <td>${r.rank}</td>
+      <td><span class="dot" style="background:${App.esc(r.color)}"></span> <b>${App.esc(r.name)}</b>${r.finishedAt ? ' 🏁' : ''}
+        <div class="bar"><div style="width:${r.total ? (r.done / r.total) * 100 : 0}%"></div></div>
+        <div class="muted" style="font-size:.8em">${r.done}/${r.total} punten</div></td>
+      <td><b>${r.score}</b></td><td>${r.solved}</td><td>${r.firsts}</td><td>${r.fastest}</td><td>${App.fmtTime(r.avgAnswerMs)}</td>
+    </tr>`).join('') || '<tr><td colspan="7" class="muted">Nog geen teams</td></tr>';
+  rows.forEach(r => { prev[r.id] = r.score; });
+}
+const socket = io();
+socket.on('score', render);
+socket.on('connect', () => { document.getElementById('live').style.color = 'var(--good)'; });
+socket.on('disconnect', () => { document.getElementById('live').style.color = 'var(--bad)'; });
+</script>
+</body>
+</html>

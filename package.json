@@ -1,0 +1,21 @@
+{
+  "name": "dropping",
+  "version": "1.0.0",
+  "description": "Dropping-app voor het familieweekend",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.22.3",
+    "leaflet": "^1.9.4",
+    "pg": "^8.23.1",
+    "socket.io": "^4.8.4",
+    "three": "^0.128.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "private": true
+}

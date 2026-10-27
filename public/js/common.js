@@ -9,12 +9,23 @@ const App = (() => {
     const token = store.get(tokenKey);
     const res = await fetch(path, {
       method: method || (body ? 'POST' : 'GET'),
-      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: 'Bearer ' + token } : {}),
+        ...(tokenKey === 'adminToken' && store.get('adminDropping') ? { 'x-dropping': store.get('adminDropping') } : {}),
+      },
       body: body ? JSON.stringify(body) : undefined,
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw Object.assign(new Error(data.error || 'Er ging iets mis'), { status: res.status });
     return data;
+  }
+
+  // Welke dropping een openbare pagina toont: ?d=<id>, anders de laatst gekozen.
+  function droppingId() {
+    const d = new URLSearchParams(location.search).get('d');
+    if (d) store.set('dropping', d);
+    return d || store.get('dropping') || '';
   }
 
   let toastTimer;
@@ -103,5 +114,5 @@ const App = (() => {
 
   function buzz(pattern) { try { navigator.vibrate && navigator.vibrate(pattern); } catch {} }
 
-  return { store, api, toast, distance, bearing, inPolygon, fmtDist, fmtTime, esc, tileLayers, confetti, buzz };
+  return { store, api, droppingId, toast, distance, bearing, inPolygon, fmtDist, fmtTime, esc, tileLayers, confetti, buzz };
 })();

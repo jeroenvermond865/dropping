@@ -48,7 +48,7 @@ function seed() {
         polygon: [[52.0735, 5.6640], [52.0760, 5.6820], [52.0700, 5.6900], [52.0600, 5.6870], [52.0560, 5.6720], [52.0620, 5.6610]] },
     ],
     teams: [
-      { id: id('t'), name: 'Team Vos', pin: '1234', color: '#ff7a3d', offset: 0 },
+      { id: id('t'), name: 'Team Vos', pin: '1111', color: '#ff7a3d', offset: 0 },
     ],
     treasures: [],
     paths: [],

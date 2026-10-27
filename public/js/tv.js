@@ -6,7 +6,8 @@
   function start() {
     const token = App.store.get('adminToken');
     if (!token) { $('login').style.display = 'flex'; return; }
-    const socket = io({ auth: { token, tv: true } });
+    const dropping = new URLSearchParams(location.search).get('d') || App.store.get('adminDropping') || '';
+    const socket = io({ auth: { token, tv: true, dropping } });
     socket.on('connect_error', () => {});
     socket.on('tv', d => { data = d; render(); });
     socket.on('pos', p => {

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#070b18">
-<title>Beheer dropping</title>
+<title>Beheer · Dropping</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
@@ -31,12 +31,13 @@
   </div>
   <aside class="panel">
     <div class="row" style="margin-bottom:10px">
-      <h2 class="grow" style="margin:0" id="title">Beheer</h2>
-      <a class="btn ghost small" href="/scorebord" target="_blank">🏆</a>
-      <a class="btn ghost small" href="/tv" target="_blank" title="Tv-scherm">📺</a>
+      <select class="grow" id="dropSel" title="Welke dropping bewerk je?" style="font-weight:700"></select>
+      <a class="btn ghost small" href="/scorebord" target="_blank" id="scoreLink">🏆</a>
+      <a class="btn ghost small" href="/tv" target="_blank" title="Tv-scherm" id="tvLink">📺</a>
       <button class="btn ghost small" id="logout">Uit</button>
     </div>
     <div class="tabs" id="tabs">
+      <button data-tab="droppings">🗺️ Droppings</button>
       <button data-tab="punten" class="on">📍 Punten</button>
       <button data-tab="teams">👥 Teams</button>
       <button data-tab="zones">⛔ Zones</button>

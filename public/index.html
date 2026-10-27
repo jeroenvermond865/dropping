@@ -13,9 +13,16 @@
 <canvas id="scene"></canvas>
 <main class="login-wrap">
   <h1 class="logo" id="title">Dropping</h1>
-  <p class="muted" style="margin:0 0 18px">Kies je team, voer de pincode in en volg de lichtjes in het donker.</p>
+  <p class="muted" style="margin:0 0 18px" id="sub">Kies je dropping en je team, voer de pincode in en volg de lichtjes in het donker.</p>
   <div class="card stack">
-    <div class="teams" id="teams"><span class="muted">Teams laden…</span></div>
+    <div id="dropWrap" style="display:none">
+      <label>Dropping</label>
+      <div class="teams" id="droppings"></div>
+    </div>
+    <div>
+      <label id="teamLabel">Team</label>
+      <div class="teams" id="teams"><span class="muted">Laden…</span></div>
+    </div>
     <div>
       <label for="pin">Pincode</label>
       <input id="pin" class="pin" inputmode="numeric" autocomplete="off" maxlength="12" placeholder="••••">
@@ -23,7 +30,7 @@
     <button class="btn block" id="go" disabled>Start de tocht</button>
   </div>
   <div class="row" style="justify-content:center;gap:18px;margin-top:16px">
-    <a href="/scorebord">🏆 Scorebord</a>
+    <a href="/scorebord" id="scoreLink">🏆 Scorebord</a>
     <a href="/beheer">🛠️ Beheer</a>
   </div>
 </main>
@@ -35,37 +42,51 @@
   if (App.store.get('teamToken')) {
     try { await App.api('/api/me'); location.href = '/spel'; return; } catch { App.store.set('teamToken', null); }
   }
-  let chosen = null;
+  let chosen = null, drop = null;
   const teamsEl = document.getElementById('teams');
+  const dropsEl = document.getElementById('droppings');
   const go = document.getElementById('go');
   const pin = document.getElementById('pin');
   const update = () => { go.disabled = !(chosen && pin.value.trim()); };
-  try {
-    const { title, teams } = await App.api('/api/teams');
-    document.getElementById('title').textContent = title;
-    document.title = title;
+  const button = (color, html, onclick) => {
+    const b = document.createElement('button');
+    b.className = 'team-btn';
+    b.innerHTML = (color ? `<span class="dot" style="background:${App.esc(color)}"></span> ` : '') + html;
+    b.onclick = () => { b.parentNode.querySelectorAll('.team-btn').forEach(x => x.classList.toggle('sel', x === b)); onclick(); };
+    return b;
+  };
+  function pickDropping(d) {
+    drop = d;
+    chosen = null;
+    App.store.set('dropping', d.id);
+    document.getElementById('scoreLink').href = '/scorebord?d=' + d.id;
     teamsEl.innerHTML = '';
-    for (const t of teams) {
-      const b = document.createElement('button');
-      b.className = 'team-btn';
-      b.innerHTML = `<span class="dot" style="background:${App.esc(t.color)}"></span> <b>${App.esc(t.name)}</b>`;
-      b.onclick = () => {
-        chosen = t.id;
-        teamsEl.querySelectorAll('.team-btn').forEach(x => x.classList.toggle('sel', x === b));
-        pin.focus();
-        update();
-      };
-      teamsEl.appendChild(b);
+    for (const t of d.teams) teamsEl.appendChild(button(t.color, `<b>${App.esc(t.name)}</b>`, () => { chosen = t.id; pin.focus(); update(); }));
+    if (d.teams.length === 1) teamsEl.firstChild.click();
+    if (!d.teams.length) teamsEl.innerHTML = '<span class="muted">Nog geen teams. Maak ze aan in het beheer.</span>';
+    update();
+  }
+  try {
+    const list = await App.api('/api/droppings');
+    if (!list.length) { teamsEl.innerHTML = '<span class="muted">Er staat nog geen dropping open. Zet er een op actief in het beheer.</span>'; return; }
+    // Bij één actieve dropping hoef je niets te kiezen
+    if (list.length > 1) {
+      document.getElementById('dropWrap').style.display = '';
+      for (const d of list) dropsEl.appendChild(button(null, `🗺️ <b>${App.esc(d.name)}</b>${d.started ? ' <span class="muted">· bezig</span>' : ''}`, () => pickDropping(d)));
+      const remembered = list.findIndex(d => d.id === App.store.get('dropping'));
+      if (remembered >= 0) dropsEl.children[remembered].click();
+      else teamsEl.innerHTML = '<span class="muted">Kies eerst een dropping.</span>';
+    } else {
+      document.getElementById('sub').textContent = list[0].name + ' · kies je team, voer de pincode in en volg de lichtjes in het donker.';
+      pickDropping(list[0]);
     }
-    if (teams.length === 1) teamsEl.firstChild.click();
-    if (!teams.length) teamsEl.innerHTML = '<span class="muted">Nog geen teams. Maak ze aan in het beheer.</span>';
   } catch (e) { teamsEl.textContent = e.message; }
   pin.oninput = update;
   pin.onkeydown = e => { if (e.key === 'Enter' && !go.disabled) go.click(); };
   go.onclick = async () => {
     go.disabled = true;
     try {
-      const { token } = await App.api('/api/login', { teamId: chosen, pin: pin.value });
+      const { token } = await App.api('/api/login', { droppingId: drop.id, teamId: chosen, pin: pin.value });
       App.store.set('teamToken', token);
       location.href = '/spel';
     } catch (e) { App.toast(e.message, 'bad'); App.buzz(200); update(); }

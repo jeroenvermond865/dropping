@@ -13,7 +13,7 @@ const ADMIN_PIN = process.env.ADMIN_PIN || 'beheer';
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
-let state;
+let db; // { droppings: [...], sessions: {} }
 
 const smallJson = express.json({ limit: '200kb' });
 app.use((req, res, next) => (req.path === '/api/photo' ? next() : smallJson(req, res, next)));
@@ -24,96 +24,145 @@ app.use('/vendor/three', express.static(path.join(__dirname, 'node_modules/three
 
 // ---- hulpfuncties ----
 
-function changed() {
-  store.save(state);
-  broadcast();
+const findDropping = id => (id && db.droppings.find(d => d.id === id)) || null;
+const firstActive = () => db.droppings.find(d => d.active) || db.droppings[0];
+
+function changed(d) {
+  store.save(db);
+  broadcast(d);
 }
 
-function broadcast() {
-  io.to('admin').emit('admin', game.adminView(state));
-  io.to('tv').emit('tv', game.tvView(state));
-  io.to('score').emit('score', publicScore());
-  for (const t of state.teams) io.to('team:' + t.id).emit('view', game.teamView(state, t));
+function broadcast(d) {
+  io.to('admin:' + d.id).emit('admin', adminView(d));
+  io.to('tv:' + d.id).emit('tv', game.tvView(d));
+  io.to('score:' + d.id).emit('score', publicScore(d));
+  for (const t of d.teams) io.to('team:' + t.id).emit('view', game.teamView(d, t));
 }
 
-function publicScore() {
+// Na het aanmaken, hernoemen of (de)activeren van een dropping
+function broadcastAll() {
+  store.save(db);
+  for (const d of db.droppings) broadcast(d);
+  io.emit('droppings', publicDroppings());
+}
+
+function adminView(d) {
   return {
-    title: state.settings.title,
-    rows: game.scoreboard(state).map(({ pos, ...r }) => r),
+    ...game.adminView(d),
+    dropping: { id: d.id, active: !!d.active },
+    droppings: db.droppings.map(x => ({ id: x.id, name: x.settings.title, active: !!x.active, teams: x.teams.length, points: x.points.length })),
   };
+}
+
+function publicScore(d) {
+  return {
+    title: d.settings.title,
+    rows: game.scoreboard(d).map(({ pos, ...r }) => r),
+  };
+}
+
+function publicDroppings() {
+  return db.droppings.filter(d => d.active).map(d => ({
+    id: d.id, name: d.settings.title, started: !!d.settings.started,
+    teams: d.teams.map(t => ({ id: t.id, name: t.name, color: t.color })),
+  }));
 }
 
 function newToken(session) {
   const token = crypto.randomBytes(18).toString('base64url');
-  state.sessions[token] = { ...session, at: Date.now() };
-  store.save(state);
+  db.sessions[token] = { ...session, at: Date.now() };
+  store.save(db);
   return token;
 }
 
 function session(req) {
   const token = (req.headers.authorization || '').replace(/^Bearer /, '');
-  return token && state.sessions[token];
+  return token && db.sessions[token];
 }
 
 function teamAuth(req, res, next) {
   const s = session(req);
-  const team = s && s.type === 'team' && state.teams.find(t => t.id === s.teamId);
+  const d = s && s.type === 'team' && findDropping(s.droppingId);
+  const team = d && d.teams.find(t => t.id === s.teamId);
   if (!team) return res.status(401).json({ error: 'Log opnieuw in.' });
+  req.d = d;
   req.team = team;
   next();
 }
 
+// Beheerders kiezen zelf welke dropping ze bewerken (header x-dropping).
 function adminAuth(req, res, next) {
   const s = session(req);
   if (!s || s.type !== 'admin') return res.status(401).json({ error: 'Alleen voor beheerders.' });
+  req.d = findDropping(req.headers['x-dropping']) || db.droppings[0];
   next();
+}
+
+// Openbare pagina's: ?d=<id> of droppingId in de body, anders de eerste actieve.
+function pickDropping(req, res, next) {
+  req.d = findDropping(req.query.d || (req.body && req.body.droppingId)) || firstActive();
+  next();
+}
+
+// Logische standaardpincode: team 1 = 1111, team 2 = 2222, ... team 10 = 1010
+function defaultPin(d) {
+  const used = new Set(d.teams.map(t => String(t.pin)));
+  for (let n = 1; n < 100; n++) {
+    const pin = n < 10 ? String(n).repeat(4) : String(n).repeat(2);
+    if (!used.has(pin)) return pin;
+  }
+  return String(Math.floor(1000 + Math.random() * 9000));
 }
 
 const clean = (v, max = 500) => String(v ?? '').slice(0, max);
 const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
 
+app.use(['/api/teams', '/api/scoreboard', '/api/login', '/api/album'], pickDropping);
+
+app.get('/api/droppings', (req, res) => res.json(publicDroppings()));
+
 // ---- openbaar ----
 
 app.get('/api/teams', (req, res) => {
-  res.json({ title: state.settings.title, teams: state.teams.map(t => ({ id: t.id, name: t.name, color: t.color })) });
+  res.json({ title: req.d.settings.title, teams: req.d.teams.map(t => ({ id: t.id, name: t.name, color: t.color })) });
 });
 
-app.get('/api/scoreboard', (req, res) => res.json(publicScore()));
+app.get('/api/scoreboard', (req, res) => res.json(publicScore(req.d)));
 
 app.post('/api/login', (req, res) => {
-  const team = state.teams.find(t => t.id === req.body.teamId);
-  if (!team || String(team.pin) !== String(req.body.pin || '').trim()) return res.status(401).json({ error: 'Pincode klopt niet.' });
-  res.json({ token: newToken({ type: 'team', teamId: team.id }), team: { id: team.id, name: team.name } });
+  const team = req.d.teams.find(t => t.id === req.body.teamId);
+  if (!team || String(team.pin).toLowerCase() !== String(req.body.pin || '').trim().toLowerCase()) return res.status(401).json({ error: 'Pincode klopt niet.' });
+  res.json({ token: newToken({ type: 'team', teamId: team.id, droppingId: req.d.id }), team: { id: team.id, name: team.name }, dropping: { id: req.d.id, name: req.d.settings.title } });
 });
 
 app.post('/api/admin/login', (req, res) => {
-  if (String(req.body.pin || '').trim() !== ADMIN_PIN) return res.status(401).json({ error: 'Pincode klopt niet.' });
+  if (String(req.body.pin || '').trim().toLowerCase() !== ADMIN_PIN.toLowerCase()) return res.status(401).json({ error: 'Pincode klopt niet.' });
   res.json({ token: newToken({ type: 'admin' }) });
 });
 
 // ---- team ----
 
-app.get('/api/me', teamAuth, (req, res) => res.json(game.teamView(state, req.team)));
+app.get('/api/me', teamAuth, (req, res) => res.json(game.teamView(req.d, req.team)));
 
 function teamAction(fn) {
   return [teamAuth, (req, res) => {
     const out = fn(req);
     if (out.error) return res.status(400).json(out);
-    changed();
+    changed(req.d);
     res.json(out);
   }];
 }
 
-app.post('/api/checkin', ...teamAction(req => game.checkin(state, req.team, {
+app.post('/api/checkin', ...teamAction(req => game.checkin(req.d, req.team, {
   lat: num(req.body.lat, null), lng: num(req.body.lng, null), acc: num(req.body.acc, 0),
 })));
-app.post('/api/answer', ...teamAction(req => game.answer(state, req.team, clean(req.body.answer, 200))));
-app.post('/api/hint', ...teamAction(req => game.useHint(state, req.team)));
+app.post('/api/answer', ...teamAction(req => game.answer(req.d, req.team, clean(req.body.answer, 200))));
+app.post('/api/hint', ...teamAction(req => game.useHint(req.d, req.team)));
 app.post('/api/mist', ...teamAction(req => {
-  const out = game.sendMist(state, req.team, req.body.teamId);
+  const out = game.sendMist(req.d, req.team, req.body.teamId);
   if (out.ok) {
     io.to('team:' + out.target.id).emit('mist', { from: req.team.name });
-    game.event(state, `🌫️ ${req.team.name} stuurde mist naar ${out.target.name}`, req.team.id);
+    game.event(req.d, `🌫️ ${req.team.name} stuurde mist naar ${out.target.name}`, req.team.id);
   }
   return out.ok ? { ok: true } : out;
 }));
@@ -121,23 +170,23 @@ app.post('/api/mist', ...teamAction(req => {
 app.post('/api/pos', teamAuth, (req, res) => {
   const lat = num(req.body.lat, null), lng = num(req.body.lng, null);
   if (lat === null || lng === null) return res.status(400).json({ error: 'Ongeldige positie.' });
-  const newTreasure = game.recordPos(state, req.team, { lat, lng, acc: num(req.body.acc, 0) });
-  if (newTreasure) changed();
+  const newTreasure = game.recordPos(req.d, req.team, { lat, lng, acc: num(req.body.acc, 0) });
+  if (newTreasure) changed(req.d);
   else {
-    store.save(state);
-    io.to('admin').emit('pos', { teamId: req.team.id, lat, lng, ts: Date.now() });
-    io.to('tv').emit('pos', { teamId: req.team.id, lat, lng, ts: Date.now() });
+    store.save(db);
+    io.to('admin:' + req.d.id).emit('pos', { teamId: req.team.id, lat, lng, ts: Date.now() });
+    io.to('tv:' + req.d.id).emit('pos', { teamId: req.team.id, lat, lng, ts: Date.now() });
   }
   res.json({ ok: true });
 });
 
-app.post('/api/treasure/:id', ...teamAction(req => game.claimTreasure(state, req.team, req.params.id, {
+app.post('/api/treasure/:id', ...teamAction(req => game.claimTreasure(req.d, req.team, req.params.id, {
   lat: num(req.body.lat, null), lng: num(req.body.lng, null), acc: num(req.body.acc, 0),
 })));
 
 app.post('/api/photo', express.json({ limit: '6mb' }), teamAuth, async (req, res) => {
-  const p = game.currentPoint(state, req.team);
-  const r = p && game.progressOf(state, req.team.id).results[p.id];
+  const p = game.currentPoint(req.d, req.team);
+  const r = p && game.progressOf(req.d, req.team.id).results[p.id];
   if (!p || p.type !== 'foto' || !r || !r.arrivedAt) return res.status(400).json({ error: 'Hier hoort geen foto bij.' });
   const m = /^data:image\/jpeg;base64,(.+)$/.exec(String(req.body.data || ''));
   const buf = m && Buffer.from(m[1], 'base64');
@@ -145,9 +194,9 @@ app.post('/api/photo', express.json({ limit: '6mb' }), teamAuth, async (req, res
   const photoId = crypto.randomBytes(12).toString('hex');
   try { await store.savePhoto(photoId, buf); }
   catch (e) { console.error('Foto opslaan mislukt:', e.message); return res.status(500).json({ error: 'Foto opslaan mislukt, probeer opnieuw.' }); }
-  const out = game.submitPhoto(state, req.team, photoId);
+  const out = game.submitPhoto(req.d, req.team, photoId);
   if (out.error) return res.status(400).json(out);
-  changed();
+  changed(req.d);
   res.json(out);
 });
 
@@ -159,7 +208,7 @@ app.get('/foto/:id', async (req, res) => {
 });
 
 app.get('/api/album', (req, res) => {
-  res.json({ title: state.settings.title, photos: state.photos.filter(p => p.status === 'goed').map(p => ({ ...p, team: state.teams.find(t => t.id === p.teamId) || null })) });
+  res.json({ title: req.d.settings.title, photos: req.d.photos.filter(p => p.status === 'goed').map(p => ({ ...p, team: req.d.teams.find(t => t.id === p.teamId) || null })) });
 });
 
 // ---- beheer ----
@@ -190,7 +239,7 @@ app.get('/api/admin/zoek', adminAuth, async (req, res) => {
   }
 });
 
-app.get('/api/admin/state', adminAuth, (req, res) => res.json(game.adminView(state)));
+app.get('/api/admin/state', adminAuth, (req, res) => res.json(adminView(req.d)));
 
 const POINT_TYPES = ['checkin', 'vraag', 'keuze', 'opdracht', 'foto'];
 const ZONE_ERROR = { error: 'Dit ligt in een verboden gebied (bos). Kies een plek erbuiten.' };
@@ -199,12 +248,12 @@ app.post('/api/admin/point', adminAuth, (req, res) => {
   const b = req.body;
   const lat = num(b.lat, null), lng = num(b.lng, null);
   if (lat === null || lng === null) return res.status(400).json({ error: 'Positie ontbreekt.' });
-  if (game.inZone(state, lat, lng)) return res.status(400).json(ZONE_ERROR);
+  if (game.inZone(req.d, lat, lng)) return res.status(400).json(ZONE_ERROR);
   const point = {
-    id: b.id && state.points.some(p => p.id === b.id) ? b.id : game.id('p'),
+    id: b.id && req.d.points.some(p => p.id === b.id) ? b.id : game.id('p'),
     name: clean(b.name, 80) || 'Nieuw punt',
     lat, lng,
-    radius: Math.min(Math.max(num(b.radius, state.settings.radius), 5), 500),
+    radius: Math.min(Math.max(num(b.radius, req.d.settings.radius), 5), 500),
     type: POINT_TYPES.includes(b.type) ? b.type : 'checkin',
     intro: clean(b.intro), question: clean(b.question), answers: clean(b.answers, 300),
     options: Array.isArray(b.options) ? b.options.map(o => clean(o, 120)).filter(Boolean).slice(0, 6) : [],
@@ -212,24 +261,24 @@ app.post('/api/admin/point', adminAuth, (req, res) => {
     points: Math.min(Math.max(num(b.points, 100), 0), 1000),
     letter: clean(b.letter, 3), kompas: !!b.kompas,
   };
-  const i = state.points.findIndex(p => p.id === point.id);
-  if (i >= 0) state.points[i] = point; else state.points.push(point);
-  changed();
+  const i = req.d.points.findIndex(p => p.id === point.id);
+  if (i >= 0) req.d.points[i] = point; else req.d.points.push(point);
+  changed(req.d);
   res.json(point);
 });
 
 app.delete('/api/admin/point/:id', adminAuth, (req, res) => {
-  state.points = state.points.filter(p => p.id !== req.params.id);
-  changed();
+  req.d.points = req.d.points.filter(p => p.id !== req.params.id);
+  changed(req.d);
   res.json({ ok: true });
 });
 
 app.post('/api/admin/order', adminAuth, (req, res) => {
   const ids = Array.isArray(req.body.ids) ? req.body.ids : [];
-  const byId = new Map(state.points.map(p => [p.id, p]));
+  const byId = new Map(req.d.points.map(p => [p.id, p]));
   const ordered = ids.map(i => byId.get(i)).filter(Boolean);
-  state.points = [...ordered, ...state.points.filter(p => !ids.includes(p.id))];
-  changed();
+  req.d.points = [...ordered, ...req.d.points.filter(p => !ids.includes(p.id))];
+  changed(req.d);
   res.json({ ok: true });
 });
 
@@ -237,25 +286,25 @@ app.post('/api/admin/treasure', adminAuth, (req, res) => {
   const b = req.body;
   const lat = num(b.lat, null), lng = num(b.lng, null);
   if (lat === null || lng === null) return res.status(400).json({ error: 'Positie ontbreekt.' });
-  if (game.inZone(state, lat, lng)) return res.status(400).json(ZONE_ERROR);
-  const old = state.treasures.find(t => t.id === b.id);
+  if (game.inZone(req.d, lat, lng)) return res.status(400).json(ZONE_ERROR);
+  const old = req.d.treasures.find(t => t.id === b.id);
   const t = { id: old ? old.id : game.id('s'), name: clean(b.name, 60) || 'Schat', lat, lng,
     points: Math.min(Math.max(num(b.points, 50), 0), 1000), claims: old ? old.claims : {} };
-  if (old) Object.assign(old, t); else state.treasures.push(t);
-  changed();
+  if (old) Object.assign(old, t); else req.d.treasures.push(t);
+  changed(req.d);
   res.json(t);
 });
 
 app.delete('/api/admin/treasure/:id', adminAuth, (req, res) => {
-  state.treasures = state.treasures.filter(t => t.id !== req.params.id);
-  changed();
+  req.d.treasures = req.d.treasures.filter(t => t.id !== req.params.id);
+  changed(req.d);
   res.json({ ok: true });
 });
 
 app.post('/api/admin/scatter', adminAuth, (req, res) => {
-  const out = game.scatterTreasures(state, Math.min(Math.max(Math.floor(num(req.body.count, 5)), 1), 30), Math.min(Math.max(num(req.body.points, 50), 0), 1000));
+  const out = game.scatterTreasures(req.d, Math.min(Math.max(Math.floor(num(req.body.count, 5)), 1), 30), Math.min(Math.max(num(req.body.points, 50), 0), 1000));
   if (out.error) return res.status(400).json(out);
-  changed();
+  changed(req.d);
   res.json(out);
 });
 
@@ -264,16 +313,16 @@ app.post('/api/admin/path', adminAuth, (req, res) => {
   const line = (Array.isArray(b.line) ? b.line : [])
     .map(c => [num(c[0], null), num(c[1], null)]).filter(c => c[0] !== null && c[1] !== null);
   if (line.length < 2) return res.status(400).json({ error: 'Een route heeft minstens 2 punten nodig.' });
-  const path_ = { id: b.id && state.paths.some(p => p.id === b.id) ? b.id : game.id('r'), name: clean(b.name, 80) || 'Looproute', line };
-  const i = state.paths.findIndex(p => p.id === path_.id);
-  if (i >= 0) state.paths[i] = path_; else state.paths.push(path_);
-  changed();
+  const path_ = { id: b.id && req.d.paths.some(p => p.id === b.id) ? b.id : game.id('r'), name: clean(b.name, 80) || 'Looproute', line };
+  const i = req.d.paths.findIndex(p => p.id === path_.id);
+  if (i >= 0) req.d.paths[i] = path_; else req.d.paths.push(path_);
+  changed(req.d);
   res.json(path_);
 });
 
 app.delete('/api/admin/path/:id', adminAuth, (req, res) => {
-  state.paths = state.paths.filter(p => p.id !== req.params.id);
-  changed();
+  req.d.paths = req.d.paths.filter(p => p.id !== req.params.id);
+  changed(req.d);
   res.json({ ok: true });
 });
 
@@ -285,7 +334,7 @@ app.post('/api/admin/routegen/preview', adminAuth, async (req, res) => {
   const start = latlng(req.body.start), end = latlng(req.body.end);
   if (!start || !end) return res.status(400).json({ error: 'Kies een start en een finish.' });
   try {
-    const out = await routegen.preview(state, start, end);
+    const out = await routegen.preview(req.d, start, end);
     if (out.error) return res.status(400).json(out);
     res.json(out);
   } catch (e) {
@@ -300,56 +349,56 @@ app.post('/api/admin/routegen/apply', adminAuth, (req, res) => {
   if (line.length < 2) return res.status(400).json({ error: 'Geen route ontvangen.' });
   const count = Math.min(Math.max(Math.floor(num(req.body.count, 6)), 1), 20);
   const side = req.body.side === 'rechtsom' ? 'rechtsom' : 'linksom';
-  const { points, total } = routegen.placePoints(state, line, count);
+  const { points, total } = routegen.placePoints(req.d, line, count);
   const mk = (p, extra = {}) => ({
-    id: game.id('p'), name: clean(p.name, 80), lat: p.lat, lng: p.lng, radius: state.settings.radius, type: 'checkin',
+    id: game.id('p'), name: clean(p.name, 80), lat: p.lat, lng: p.lng, radius: req.d.settings.radius, type: 'checkin',
     intro: p.intro || '', question: '', answers: '', options: [], correct: 0, hint: '', points: 50, letter: '', kompas: false, ...extra,
   });
-  const mid = points.filter(p => !game.inZone(state, p.lat, p.lng)).map(p => mk(p));
+  const mid = points.filter(p => !game.inZone(req.d, p.lat, p.lng)).map(p => mk(p));
   if (req.body.replace) {
     const [sLat, sLng] = line[0], [eLat, eLng] = line[line.length - 1];
-    state.points = [
+    req.d.points = [
       mk({ name: 'Start', lat: sLat, lng: sLng, intro: 'Welkom bij de dropping! Check hier in om te beginnen.' }),
       ...mid,
       mk({ name: 'Finish', lat: eLat, lng: eLng, intro: 'De laatste etappe, naar huis!' }, { points: 100 }),
     ];
-  } else if (state.settings.lastIsFinish && state.points.length) {
-    state.points.splice(state.points.length - 1, 0, ...mid);
+  } else if (req.d.settings.lastIsFinish && req.d.points.length) {
+    req.d.points.splice(req.d.points.length - 1, 0, ...mid);
   } else {
-    state.points.push(...mid);
+    req.d.points.push(...mid);
   }
-  state.paths.push({ id: game.id('r'), name: `Automatische route ${side} (${(total / 1000).toFixed(1).replace('.', ',')} km)`, line });
-  changed();
+  req.d.paths.push({ id: game.id('r'), name: `Automatische route ${side} (${(total / 1000).toFixed(1).replace('.', ',')} km)`, line });
+  changed(req.d);
   res.json({ ok: true, added: mid.length, poi: points.filter(p => p.poi).length, total });
 });
 
 app.post('/api/admin/photo/:id', adminAuth, (req, res) => {
-  const out = game.judgePhoto(state, req.params.id, !!req.body.approve);
+  const out = game.judgePhoto(req.d, req.params.id, !!req.body.approve);
   if (out.error) return res.status(400).json(out);
-  changed();
+  changed(req.d);
   res.json(out);
 });
 
 app.post('/api/admin/team', adminAuth, (req, res) => {
   const b = req.body;
   const team = {
-    id: b.id && state.teams.some(t => t.id === b.id) ? b.id : game.id('t'),
+    id: b.id && req.d.teams.some(t => t.id === b.id) ? b.id : game.id('t'),
     name: clean(b.name, 40) || 'Team',
-    pin: clean(b.pin, 12) || String(Math.floor(1000 + Math.random() * 9000)),
+    pin: clean(b.pin, 12).trim() || req.d.teams.find(t => t.id === b.id)?.pin || defaultPin(req.d),
     color: /^#[0-9a-f]{6}$/i.test(b.color) ? b.color : '#4dd2ff',
     offset: Math.max(0, Math.floor(num(b.offset, 0))),
   };
-  const i = state.teams.findIndex(t => t.id === team.id);
-  if (i >= 0) state.teams[i] = team; else state.teams.push(team);
-  changed();
+  const i = req.d.teams.findIndex(t => t.id === team.id);
+  if (i >= 0) req.d.teams[i] = team; else req.d.teams.push(team);
+  changed(req.d);
   res.json(team);
 });
 
 app.delete('/api/admin/team/:id', adminAuth, (req, res) => {
-  state.teams = state.teams.filter(t => t.id !== req.params.id);
-  delete state.progress[req.params.id];
-  for (const [k, s] of Object.entries(state.sessions)) if (s.teamId === req.params.id) delete state.sessions[k];
-  changed();
+  req.d.teams = req.d.teams.filter(t => t.id !== req.params.id);
+  delete req.d.progress[req.params.id];
+  for (const [k, s] of Object.entries(db.sessions)) if (s.teamId === req.params.id) delete db.sessions[k];
+  changed(req.d);
   res.json({ ok: true });
 });
 
@@ -358,21 +407,21 @@ app.post('/api/admin/zone', adminAuth, (req, res) => {
   const polygon = (Array.isArray(b.polygon) ? b.polygon : [])
     .map(c => [num(c[0], null), num(c[1], null)]).filter(c => c[0] !== null && c[1] !== null);
   if (polygon.length < 3) return res.status(400).json({ error: 'Een zone heeft minstens 3 hoeken nodig.' });
-  const zone = { id: b.id && state.zones.some(z => z.id === b.id) ? b.id : game.id('z'), name: clean(b.name, 80) || 'Verboden gebied', polygon };
-  const i = state.zones.findIndex(z => z.id === zone.id);
-  if (i >= 0) state.zones[i] = zone; else state.zones.push(zone);
-  changed();
+  const zone = { id: b.id && req.d.zones.some(z => z.id === b.id) ? b.id : game.id('z'), name: clean(b.name, 80) || 'Verboden gebied', polygon };
+  const i = req.d.zones.findIndex(z => z.id === zone.id);
+  if (i >= 0) req.d.zones[i] = zone; else req.d.zones.push(zone);
+  changed(req.d);
   res.json(zone);
 });
 
 app.delete('/api/admin/zone/:id', adminAuth, (req, res) => {
-  state.zones = state.zones.filter(z => z.id !== req.params.id);
-  changed();
+  req.d.zones = req.d.zones.filter(z => z.id !== req.params.id);
+  changed(req.d);
   res.json({ ok: true });
 });
 
 app.post('/api/admin/settings', adminAuth, (req, res) => {
-  const b = req.body, s = state.settings;
+  const b = req.body, s = req.d.settings;
   if (b.title !== undefined) s.title = clean(b.title, 80);
   if (b.radius !== undefined) s.radius = Math.min(Math.max(num(b.radius, 30), 5), 500);
   if (b.hintCost !== undefined) s.hintCost = Math.max(0, num(b.hintCost, 20));
@@ -381,63 +430,147 @@ app.post('/api/admin/settings', adminAuth, (req, res) => {
   if (b.lastIsFinish !== undefined) s.lastIsFinish = !!b.lastIsFinish;
   if (b.treasureReveal !== undefined) s.treasureReveal = Math.min(Math.max(num(b.treasureReveal, 100), 20), 1000);
   if (b.showPath !== undefined) s.showPath = !!b.showPath;
-  changed();
+  changed(req.d);
   res.json(s);
 });
 
 // Zet een team een punt verder (bijvoorbeeld als een punt onbereikbaar blijkt).
 app.post('/api/admin/skip/:teamId', adminAuth, (req, res) => {
-  const team = state.teams.find(t => t.id === req.params.teamId);
-  const p = team && game.currentPoint(state, team);
+  const team = req.d.teams.find(t => t.id === req.params.teamId);
+  const p = team && game.currentPoint(req.d, team);
   if (!p) return res.status(400).json({ error: 'Niets om over te slaan.' });
-  const pr = game.progressOf(state, team.id);
+  const pr = game.progressOf(req.d, team.id);
   pr.results[p.id] = { ...(pr.results[p.id] || {}), arrivedAt: pr.results[p.id]?.arrivedAt || Date.now(), done: true, correct: false, doneAt: Date.now(), answerPoints: 0, skipped: true };
-  if (!game.currentPoint(state, team)) pr.finishedAt = Date.now();
-  changed();
+  if (!game.currentPoint(req.d, team)) pr.finishedAt = Date.now();
+  changed(req.d);
   res.json({ ok: true });
 });
 
 app.post('/api/admin/reset', adminAuth, (req, res) => {
   const teamId = req.body.teamId;
   if (teamId) {
-    delete state.progress[teamId];
-    for (const t of state.treasures) if (t.claims) delete t.claims[teamId];
-    state.photos = state.photos.filter(p => p.teamId !== teamId);
+    delete req.d.progress[teamId];
+    for (const t of req.d.treasures) if (t.claims) delete t.claims[teamId];
+    req.d.photos = req.d.photos.filter(p => p.teamId !== teamId);
   } else {
-    state.progress = {};
-    for (const t of state.treasures) t.claims = {};
-    state.photos = [];
-    state.events = [];
+    req.d.progress = {};
+    for (const t of req.d.treasures) t.claims = {};
+    req.d.photos = [];
+    req.d.events = [];
   }
-  changed();
+  changed(req.d);
+  res.json({ ok: true });
+});
+
+// ---- droppings beheren ----
+
+const TEAM_COLORS = ['#ff7a3d', '#4dd2ff', '#3ee08f', '#b06bff', '#ffc44d', '#ff5470'];
+
+function emptyDropping(name, from) {
+  const d = game.seed();
+  d.id = game.id('d');
+  d.active = false;
+  d.settings.title = name;
+  d.points = [];
+  d.treasures = [];
+  d.paths = [];
+  d.zones = from ? JSON.parse(JSON.stringify(from.zones)) : d.zones;
+  d.teams = [];
+  d.teams.push({ id: game.id('t'), name: 'Team 1', pin: defaultPin(d), color: TEAM_COLORS[0], offset: 0 });
+  delete d.sessions;
+  return d;
+}
+
+app.post('/api/admin/dropping', adminAuth, (req, res) => {
+  const name = clean(req.body.name, 80).trim() || 'Nieuwe dropping';
+  const from = findDropping(req.body.copyFrom);
+  let d;
+  if (from) {
+    // Kopie: route, zones, teams en schatten mee, maar zonder voortgang
+    d = JSON.parse(JSON.stringify({ settings: from.settings, points: from.points, zones: from.zones, paths: from.paths, teams: from.teams, treasures: from.treasures }));
+    d = game.migrate({ ...d, id: game.id('d'), active: false, progress: {}, photos: [], events: [] });
+    delete d.sessions;
+    d.settings.title = name;
+    d.settings.started = false;
+    for (const t of d.teams) t.id = game.id('t');
+    for (const t of d.treasures) t.claims = {};
+  } else {
+    d = emptyDropping(name, db.droppings[0]);
+  }
+  db.droppings.push(d);
+  broadcastAll();
+  res.json({ id: d.id });
+});
+
+app.post('/api/admin/dropping/:id', adminAuth, (req, res) => {
+  const d = findDropping(req.params.id);
+  if (!d) return res.status(404).json({ error: 'Deze dropping bestaat niet meer.' });
+  if (req.body.name !== undefined) d.settings.title = clean(req.body.name, 80).trim() || d.settings.title;
+  if (req.body.active !== undefined) d.active = !!req.body.active;
+  broadcastAll();
+  res.json({ ok: true });
+});
+
+app.delete('/api/admin/dropping/:id', adminAuth, (req, res) => {
+  if (db.droppings.length <= 1) return res.status(400).json({ error: 'De laatste dropping kan niet weg.' });
+  const d = findDropping(req.params.id);
+  if (!d) return res.status(404).json({ error: 'Deze dropping bestaat niet meer.' });
+  db.droppings = db.droppings.filter(x => x !== d);
+  for (const [k, s] of Object.entries(db.sessions)) if (s.droppingId === d.id) delete db.sessions[k];
+  broadcastAll();
   res.json({ ok: true });
 });
 
 // ---- live verbindingen ----
 
 io.on('connection', socket => {
-  const token = socket.handshake.auth && socket.handshake.auth.token;
-  const s = token && state.sessions[token];
-  if (s && s.type === 'admin' && socket.handshake.auth.tv) {
-    socket.join('tv');
-    socket.emit('tv', game.tvView(state));
+  const auth = socket.handshake.auth || {};
+  const s = auth.token && db.sessions[auth.token];
+  let d = findDropping(auth.dropping) || firstActive();
+  if (s && s.type === 'admin' && auth.tv) {
+    socket.join('tv:' + d.id);
+    socket.emit('tv', game.tvView(d));
   } else if (s && s.type === 'admin') {
-    socket.join('admin');
-    socket.emit('admin', game.adminView(state));
-  } else if (s && s.type === 'team' && state.teams.some(t => t.id === s.teamId)) {
+    d = findDropping(auth.dropping) || db.droppings[0];
+    socket.join('admin:' + d.id);
+    socket.emit('admin', adminView(d));
+  } else if (s && s.type === 'team' && findDropping(s.droppingId)?.teams.some(t => t.id === s.teamId)) {
+    d = findDropping(s.droppingId);
     socket.join('team:' + s.teamId);
-    socket.emit('view', game.teamView(state, state.teams.find(t => t.id === s.teamId)));
+    socket.emit('view', game.teamView(d, d.teams.find(t => t.id === s.teamId)));
   }
-  socket.join('score');
-  socket.emit('score', publicScore());
+  socket.join('score:' + d.id);
+  socket.emit('score', publicScore(d));
 });
 
 // Ververs elke 30 s zodat aflopende mist en tijden bijgewerkt worden.
-setInterval(broadcast, 30000);
+setInterval(() => db.droppings.forEach(broadcast), 30000);
+
+// Oude opslag (één spel) omzetten naar een lijst droppings.
+function migrateDb(raw) {
+  if (raw && Array.isArray(raw.droppings)) {
+    raw.sessions = raw.sessions || {};
+    raw.droppings = raw.droppings.map(d => { const m = game.migrate(d); delete m.sessions; return m; });
+    return raw;
+  }
+  const old = game.migrate(raw || game.seed());
+  const { sessions, ...d } = old;
+  d.id = game.id('d');
+  d.active = true;
+  if (d.settings.title === 'Dropping Familieweekend') d.settings.title = 'Familieweekend 2026';
+  // Logische pincodes: team 1 = 1111, team 2 = 2222, ...
+  const pins = d.teams.map(t => t.pin);
+  d.teams.forEach(t => { t.pin = null; });
+  d.teams.forEach(t => { t.pin = defaultPin(d); });
+  // Sessies blijven geldig, maar weten nu bij welke dropping ze horen
+  for (const s of Object.values(sessions)) if (s.type === 'team') s.droppingId = d.id;
+  console.log('Opslag omgezet naar meerdere droppings; pincodes', pins.join(','), '->', d.teams.map(t => t.pin).join(','));
+  return { droppings: [d], sessions };
+}
 
 (async () => {
-  state = game.migrate((await store.init()) || game.seed());
-  store.save(state);
+  db = migrateDb(await store.init());
+  store.save(db);
   server.listen(PORT, () => console.log(`Dropping draait op poort ${PORT} (${store.usesDatabase() ? 'Postgres' : 'bestand'})`));
 })();
 

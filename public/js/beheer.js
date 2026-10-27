@@ -20,10 +20,11 @@
       $('adminPin').focus();
       return;
     }
+    App.store.set('adminDropping', state.dropping.id);
     $('login').style.display = 'none';
     $('admin').style.display = 'grid';
     initMap();
-    socket = io({ auth: { token: App.store.get('adminToken') } });
+    socket = io({ auth: { token: App.store.get('adminToken'), dropping: state.dropping.id } });
     socket.on('admin', s => { state = s; draw(); if (!(tab === 'punten' && selected) && !isTyping()) renderTab(); });
     socket.on('pos', ({ teamId, lat, lng, ts }) => {
       const pr = state.progress[teamId] || (state.progress[teamId] = { results: {} });
@@ -102,7 +103,7 @@
   }
 
   function draw() {
-    $('title').textContent = state.settings.title;
+    renderDropSel();
     layers.zones.clearLayers();
     for (const z of state.zones) {
       L.polygon(z.polygon, { color: '#ff5470', weight: 2, fillOpacity: 0.2, dashArray: '6 6' })
@@ -240,7 +241,7 @@
 
   function renderTab() {
     document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
-    ({ punten: renderPoints, teams: renderTeams, zones: renderZones, route: renderPaths, schatten: renderTreasures, fotos: renderPhotos, live: renderLive, instellingen: renderSettings })[tab]();
+    ({ droppings: renderDroppings, punten: renderPoints, teams: renderTeams, zones: renderZones, route: renderPaths, schatten: renderTreasures, fotos: renderPhotos, live: renderLive, instellingen: renderSettings })[tab]();
     const pending = state.photos.filter(p => p.status === 'wacht').length;
     document.querySelector('[data-tab=fotos]').textContent = pending ? `📸 Foto's (${pending})` : "📸 Foto's";
   }
@@ -503,7 +504,7 @@
   // Teams
   function renderTeams() {
     const el = $('tab');
-    el.innerHTML = `<p class="muted" style="font-size:.85em">Elk team logt in met zijn pincode. Met "start bij punt" laat je teams op een ander punt beginnen, zodat ze niet achter elkaar aan lopen.</p>
+    el.innerHTML = `<p class="muted" style="font-size:.85em">Elk team logt in met zijn pincode. Nieuwe teams krijgen vanzelf een makkelijke code: team 1 = 1111, team 2 = 2222, enzovoort. Met "start bij punt" laat je teams op een ander punt beginnen, zodat ze niet achter elkaar aan lopen.</p>
       ${state.teams.map(t => `
         <div class="card stack" style="padding:14px;margin-bottom:10px" data-team="${t.id}">
           <div class="grid2">
@@ -632,12 +633,81 @@
     return [...rot(pts.slice(0, -1)), pts[pts.length - 1]];
   }
 
+  // ---- droppings: meerdere routes naast elkaar ----
+  function switchDropping(id) {
+    App.store.set('adminDropping', id);
+    location.reload();
+  }
+
+  function renderDropSel() {
+    const sel = $('dropSel');
+    sel.innerHTML = state.droppings.map(d => `<option value="${esc(d.id)}" ${d.id === state.dropping.id ? 'selected' : ''}>${d.active ? '🟢' : '⚪'} ${esc(d.name)}</option>`).join('')
+      + '<option value="__new">＋ Nieuwe dropping…</option>';
+    sel.onchange = () => {
+      if (sel.value === '__new') { sel.value = state.dropping.id; tab = 'droppings'; renderTab(); return; }
+      switchDropping(sel.value);
+    };
+    $('scoreLink').href = '/scorebord?d=' + state.dropping.id;
+    $('tvLink').href = '/tv?d=' + state.dropping.id;
+    document.title = state.settings.title + ' · Beheer';
+  }
+
+  function renderDroppings() {
+    const el = $('tab');
+    el.innerHTML = `<div class="stack">
+      <p class="muted" style="font-size:.85em;margin:0">Elke dropping heeft een eigen route, teams en scores. Spelers zien op de startpagina alleen de droppings die op <b>actief</b> staan.</p>
+      ${state.droppings.map(d => `<div class="card" style="padding:12px">
+        <div class="row"><b class="grow">${esc(d.name)}</b>${d.id === state.dropping.id ? '<span class="pill">je bewerkt deze</span>' : ''}</div>
+        <div class="muted" style="font-size:.85em;margin:4px 0 8px">${d.points} punten · ${d.teams} teams</div>
+        <label style="display:flex;gap:8px;color:var(--text);margin-bottom:8px"><input type="checkbox" data-active="${esc(d.id)}" ${d.active ? 'checked' : ''}> Actief (spelers kunnen deze kiezen)</label>
+        <div class="row" style="gap:6px;flex-wrap:wrap">
+          ${d.id === state.dropping.id ? '' : `<button class="btn small" data-open="${esc(d.id)}">✏️ Bewerken</button>`}
+          <button class="btn ghost small" data-rename="${esc(d.id)}">Naam</button>
+          <button class="btn ghost small" data-copy="${esc(d.id)}">Kopie</button>
+          ${state.droppings.length > 1 ? `<button class="btn ghost small danger" data-del="${esc(d.id)}">Verwijder</button>` : ''}
+        </div></div>`).join('')}
+      <hr style="border:0;border-top:1px solid var(--line);width:100%">
+      <div><label>Nieuwe dropping</label><input id="d_name" placeholder="Bijv. Kinderroute of Rondje Lunteren"></div>
+      <button class="btn" id="d_new">＋ Lege dropping maken</button>
+      <p class="muted" style="font-size:.8em;margin:0">Een lege dropping krijgt de verboden zones en Team 1 (pincode 1111). Met Kopie neem je de route, zones, teams en schatten over, zonder scores.</p>
+    </div>`;
+    const byId = id => state.droppings.find(d => d.id === id);
+    el.querySelectorAll('[data-active]').forEach(c => { c.onchange = () => api('/api/admin/dropping/' + c.dataset.active, { active: c.checked }).catch(e => App.toast(e.message, 'bad')); });
+    el.querySelectorAll('[data-open]').forEach(b => { b.onclick = () => switchDropping(b.dataset.open); });
+    el.querySelectorAll('[data-rename]').forEach(b => {
+      b.onclick = async () => {
+        const name = prompt('Nieuwe naam', byId(b.dataset.rename).name);
+        if (name) await api('/api/admin/dropping/' + b.dataset.rename, { name });
+      };
+    });
+    el.querySelectorAll('[data-copy]').forEach(b => {
+      b.onclick = async () => {
+        const name = prompt('Naam van de kopie', byId(b.dataset.copy).name + ' (kopie)');
+        if (!name) return;
+        const { id } = await api('/api/admin/dropping', { name, copyFrom: b.dataset.copy });
+        switchDropping(id);
+      };
+    });
+    el.querySelectorAll('[data-del]').forEach(b => {
+      b.onclick = async () => {
+        const d = byId(b.dataset.del);
+        if (!confirm(`"${d.name}" met alle punten, teams en scores verwijderen?`)) return;
+        await api('/api/admin/dropping/' + d.id, null, 'DELETE');
+        if (d.id === state.dropping.id) switchDropping(state.droppings.find(x => x.id !== d.id).id);
+      };
+    });
+    $('d_new').onclick = async () => {
+      const { id } = await api('/api/admin/dropping', { name: $('d_name').value || 'Nieuwe dropping' });
+      switchDropping(id);
+    };
+  }
+
   // Instellingen
   function renderSettings() {
     const s = state.settings;
     const el = $('tab');
     el.innerHTML = `<div class="stack">
-      <div><label>Titel</label><input id="s_title" value="${esc(s.title)}"></div>
+      <div><label>Naam van deze dropping</label><input id="s_title" value="${esc(s.title)}"></div>
       <div class="grid2">
         <div><label>Standaard straal (m)</label><input id="s_radius" type="number" value="${s.radius}"></div>
         <div><label>Kosten hint (pt)</label><input id="s_hint" type="number" value="${s.hintCost}"></div>
@@ -645,7 +715,7 @@
       <label style="display:flex;gap:8px;color:var(--text)"><input type="checkbox" id="s_test" ${s.testMode ? 'checked' : ''}> Testmodus: inchecken kan overal (zet uit tijdens het echte spel!)</label>
       <label style="display:flex;gap:8px;color:var(--text)"><input type="checkbox" id="s_finish" ${s.lastIsFinish ? 'checked' : ''}> Laatste punt is voor iedereen de finish</label>
       <div><label>Schatten zichtbaar vanaf (m)</label><input id="s_reveal" type="number" value="${s.treasureReveal}"></div>
-      <a class="btn ghost" href="/tv" target="_blank">📺 Tv-scherm openen</a>
+      <a class="btn ghost" href="/tv?d=${esc(state.dropping.id)}" target="_blank">📺 Tv-scherm openen</a>
       <button class="btn" id="s_save">Opslaan</button>
       <hr style="border:0;border-top:1px solid var(--line);width:100%">
       <button class="btn danger" id="s_reset">Alle voortgang en scores wissen</button>

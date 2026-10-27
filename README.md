@@ -2,9 +2,11 @@
 
 Mobiele webapp voor een dropping/speurtocht: teams krijgen steeds één nieuw punt, lopen er met gps heen, checken in, beantwoorden een vraag of doen een opdracht en krijgen dan het volgende punt. Met live scorebord en een beheerscherm om samen de route op de kaart te zetten.
 
+Je kunt meerdere droppings naast elkaar maken (beheer, tab Droppings), elk met eigen route, teams en scores. Spelers zien alleen de droppings die op actief staan. Nieuwe teams krijgen een makkelijke pincode: team 1 = 1111, team 2 = 2222, enzovoort. Scorebord, album en tv tonen een bepaalde dropping met `?d=<id>`.
+
 ## Pagina's
 
-- `/` inloggen per team (teamnaam + pincode), met 3D-achtergrond
+- `/` kies een actieve dropping, dan je team en pincode, met 3D-achtergrond
 - `/spel` kaart, kompaspijl, afstand, inchecken, vragen, letters voor het codewoord, mist-jokers
 - `/scorebord` live podium en tabel (punten, opgelost, eerste bij punt, snelste antwoord)
 - `/beheer` punten op de kaart klikken en slepen, volgorde, vragen, teams, verboden zones (bos, vorm aanpasbaar), looproutes, verborgen schatten, foto's beoordelen, live volgen

@@ -26,14 +26,14 @@
 <script src="/js/common.js"></script>
 <script>
 async function load() {
-  const { photos } = await App.api('/api/album');
+  const { photos } = await App.api('/api/album?d=' + encodeURIComponent(App.droppingId()));
   document.getElementById('album').innerHTML = photos.map((p, i) => `
     <figure style="animation-delay:${Math.min(i, 10) * .05}s"><a href="/foto/${p.id}" target="_blank"><img src="/foto/${p.id}" loading="lazy" alt=""></a>
     <figcaption>${p.team ? `<span class="dot" style="background:${App.esc(p.team.color)}"></span> <b>${App.esc(p.team.name)}</b> · ` : ''}${App.esc(p.pointName)}</figcaption></figure>`).join('')
     || '<p class="muted">Nog geen goedgekeurde foto\'s.</p>';
 }
 load();
-io().on('score', () => { clearTimeout(window.t); window.t = setTimeout(load, 1500); });
+io({ auth: { dropping: App.droppingId() } }).on('score', () => { clearTimeout(window.t); window.t = setTimeout(load, 1500); });
 </script>
 </body>
 </html>

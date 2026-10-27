@@ -43,7 +43,7 @@ function render({ title, rows }) {
     </tr>`).join('') || '<tr><td colspan="7" class="muted">Nog geen teams</td></tr>';
   rows.forEach(r => { prev[r.id] = r.score; });
 }
-const socket = io();
+const socket = io({ auth: { dropping: App.droppingId() } });
 socket.on('score', render);
 socket.on('connect', () => { document.getElementById('live').style.color = 'var(--good)'; });
 socket.on('disconnect', () => { document.getElementById('live').style.color = 'var(--bad)'; });

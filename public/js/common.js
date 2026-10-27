@@ -68,8 +68,9 @@ const App = (() => {
 
   function tileLayers() {
     return {
-      'Nacht': L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        maxZoom: 20, attribution: '&copy; OpenStreetMap, &copy; CARTO' }),
+      // Donkere kaart zonder API-sleutel: gewone OSM-tegels, in kleur omgedraaid met CSS
+      'Nacht': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19, className: 'dark-tiles', attribution: '&copy; OpenStreetMap' }),
       'Kaart': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19, attribution: '&copy; OpenStreetMap' }),
       'Satelliet': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {

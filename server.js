@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const { Server } = require('socket.io');
 const store = require('./store');
 const game = require('./game');
+const routegen = require('./routegen');
 
 const PORT = process.env.PORT || 3000;
 const ADMIN_PIN = process.env.ADMIN_PIN || 'beheer';
@@ -274,6 +275,52 @@ app.delete('/api/admin/path/:id', adminAuth, (req, res) => {
   state.paths = state.paths.filter(p => p.id !== req.params.id);
   changed();
   res.json({ ok: true });
+});
+
+// ---- automatische route ----
+
+const latlng = p => (p && Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lng)) ? { lat: Number(p.lat), lng: Number(p.lng) } : null);
+
+app.post('/api/admin/routegen/preview', adminAuth, async (req, res) => {
+  const start = latlng(req.body.start), end = latlng(req.body.end);
+  if (!start || !end) return res.status(400).json({ error: 'Kies een start en een finish.' });
+  try {
+    const out = await routegen.preview(state, start, end);
+    if (out.error) return res.status(400).json(out);
+    res.json(out);
+  } catch (e) {
+    console.error('Route maken mislukt:', e.message);
+    res.status(502).json({ error: 'De kaartgegevens van OpenStreetMap zijn nu niet bereikbaar. Probeer het over een minuut opnieuw.' });
+  }
+});
+
+app.post('/api/admin/routegen/apply', adminAuth, (req, res) => {
+  const line = (Array.isArray(req.body.line) ? req.body.line : [])
+    .map(c => [num(c[0], null), num(c[1], null)]).filter(c => c[0] !== null && c[1] !== null);
+  if (line.length < 2) return res.status(400).json({ error: 'Geen route ontvangen.' });
+  const count = Math.min(Math.max(Math.floor(num(req.body.count, 6)), 1), 20);
+  const side = req.body.side === 'rechtsom' ? 'rechtsom' : 'linksom';
+  const { points, total } = routegen.placePoints(state, line, count);
+  const mk = (p, extra = {}) => ({
+    id: game.id('p'), name: clean(p.name, 80), lat: p.lat, lng: p.lng, radius: state.settings.radius, type: 'checkin',
+    intro: p.intro || '', question: '', answers: '', options: [], correct: 0, hint: '', points: 50, letter: '', kompas: false, ...extra,
+  });
+  const mid = points.filter(p => !game.inZone(state, p.lat, p.lng)).map(p => mk(p));
+  if (req.body.replace) {
+    const [sLat, sLng] = line[0], [eLat, eLng] = line[line.length - 1];
+    state.points = [
+      mk({ name: 'Start', lat: sLat, lng: sLng, intro: 'Welkom bij de dropping! Check hier in om te beginnen.' }),
+      ...mid,
+      mk({ name: 'Finish', lat: eLat, lng: eLng, intro: 'De laatste etappe, naar huis!' }, { points: 100 }),
+    ];
+  } else if (state.settings.lastIsFinish && state.points.length) {
+    state.points.splice(state.points.length - 1, 0, ...mid);
+  } else {
+    state.points.push(...mid);
+  }
+  state.paths.push({ id: game.id('r'), name: `Automatische route ${side} (${(total / 1000).toFixed(1).replace('.', ',')} km)`, line });
+  changed();
+  res.json({ ok: true, added: mid.length, poi: points.filter(p => p.poi).length, total });
 });
 
 app.post('/api/admin/photo/:id', adminAuth, (req, res) => {

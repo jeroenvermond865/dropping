@@ -133,7 +133,14 @@
     drawTeams();
   }
 
-  $('fsBtn').onclick = () => document.documentElement.requestFullscreen?.().catch(() => {});
+  // Volledig scherm aan/uit (Esc werkt ook)
+  $('fsBtn').onclick = () => {
+    if (document.fullscreenElement || document.webkitFullscreenElement) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    else (document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen)?.call(document.documentElement);
+  };
+  const fsLabel = () => { $('fsBtn').textContent = document.fullscreenElement || document.webkitFullscreenElement ? '✕ Volledig scherm uit' : '⛶ Volledig scherm'; };
+  document.addEventListener('fullscreenchange', fsLabel);
+  document.addEventListener('webkitfullscreenchange', fsLabel);
 
   start();
 })();

@@ -54,6 +54,7 @@
     layers.teams = L.layerGroup().addTo(map);
     layers.draft = L.layerGroup().addTo(map);
     layers.paths = L.layerGroup().addTo(map);
+    layers.gen = L.layerGroup().addTo(map);
     layers.treasures = L.layerGroup().addTo(map);
     map.on('click', onMapClick);
     mapReadyFns.forEach(f => f());
@@ -86,6 +87,14 @@
         await api('/api/admin/treasure', { lat: e.latlng.lat, lng: e.latlng.lng, name: `Schat ${state.treasures.length + 1}`, points: 50 });
         App.toast('💎 Schat geplaatst', 'good');
       } catch (err) { App.toast(err.message, 'bad'); }
+    } else if (mode === 'pickStart' || mode === 'pickEnd') {
+      if (state.zones.some(z => App.inPolygon([e.latlng.lat, e.latlng.lng], z.polygon))) return App.toast('Die plek ligt in het verboden gebied. Kies een plek erbuiten.', 'bad');
+      gen[mode === 'pickStart' ? 'start' : 'end'] = { lat: e.latlng.lat, lng: e.latlng.lng };
+      gen.options = null;
+      setMode(null);
+      tab = 'route';
+      renderTab();
+      drawGen();
     } else if (mode === 'zone' || mode === 'path') {
       draft.push([e.latlng.lat, e.latlng.lng]);
       drawDraft();
@@ -223,6 +232,7 @@
     if (!b) return;
     tab = b.dataset.tab;
     selected = null;
+    if (tab !== 'route') layers.gen.clearLayers();
     setMode(null);
     renderTab();
     draw();
@@ -283,10 +293,75 @@
       Zet er een tussenpunt buiten het bos bij, of teken onder 🛤️ Route de echte looproute en zet "route tonen" aan.</div>`;
   }
 
+  // ---- automatische route ----
+  const gen = { start: null, end: null, options: null, chosen: 0, count: 6, replace: false, busy: false };
+  const GEN_COLORS = ['#4dd2ff', '#3ee08f'];
+
+  function drawGen() {
+    layers.gen.clearLayers();
+    const pin = (p, txt, color) => L.marker([p.lat, p.lng], { zIndexOffset: 3000,
+      icon: L.divIcon({ className: '', html: `<div class="pin-marker" style="background:${color}"><span>${txt}</span></div>`, iconSize: [34, 34], iconAnchor: [17, 34] }) }).addTo(layers.gen);
+    (gen.options || []).forEach((o, i) => {
+      L.polyline(o.line, { color: GEN_COLORS[i], weight: i === gen.chosen ? 7 : 4, opacity: i === gen.chosen ? 0.95 : 0.45 })
+        .bindTooltip(`${o.side} · ${App.fmtDist(o.length)}`, { sticky: true })
+        .on('click', () => { gen.chosen = i; renderTab(); drawGen(); })
+        .addTo(layers.gen);
+    });
+    if (gen.start) pin(gen.start, 'S', '#ff7a3d');
+    if (gen.end) pin(gen.end, '🏁', '#3ee08f');
+  }
+
+  function genCard() {
+    const p = c => c ? `${c.lat.toFixed(4)}, ${c.lng.toFixed(4)}` : 'nog niet gekozen';
+    const opts = gen.options ? gen.options.map((o, i) => `
+      <label class="list-item ${i === gen.chosen ? 'sel' : ''}" style="cursor:pointer"><input type="radio" name="genOpt" value="${i}" ${i === gen.chosen ? 'checked' : ''}>
+        <span class="dot" style="background:${GEN_COLORS[i]}"></span><b class="grow">${o.side === 'linksom' ? '↺ Linksom' : '↻ Rechtsom'}</b><span>${App.fmtDist(o.length)}</span></label>`).join('') : '';
+    return `<div class="card stack" style="padding:14px;margin-bottom:14px;border-color:var(--accent)">
+      <b>🪄 Route automatisch maken</b>
+      <div class="muted" style="font-size:.85em">Berekent een route over echte paden en wegen uit OpenStreetMap, buiten de rode zones, en zet punten bij bankjes, uitkijkpunten en monumenten onderweg.</div>
+      <div class="row"><div class="grow" style="font-size:.9em">🟠 Start (dropplek): <span class="muted">${p(gen.start)}</span></div><button class="btn ghost small" id="pickStart">Kies op kaart</button></div>
+      <div class="row"><div class="grow" style="font-size:.9em">🏁 Finish: <span class="muted">${p(gen.end)}</span></div><button class="btn ghost small" id="pickEnd">Kies op kaart</button></div>
+      <button class="btn" id="genPreview" ${gen.start && gen.end && !gen.busy ? '' : 'disabled'}>${gen.busy ? '⏳ Paden ophalen… (kan 30 sec duren)' : '🔍 Bereken routes'}</button>
+      ${opts ? `<div>${opts}</div>
+        <div class="grid2"><div><label>Punten onderweg</label><input id="genCount" type="number" min="1" max="20" value="${gen.count}"></div>
+        <label style="display:flex;gap:8px;align-items:center;color:var(--text);font-size:.85em"><input type="checkbox" id="genReplace" ${gen.replace ? 'checked' : ''}> Huidige punten vervangen</label></div>
+        <button class="btn" id="genApply">✅ Deze route gebruiken</button>` : ''}
+    </div>`;
+  }
+
+  function bindGen() {
+    $('pickStart').onclick = () => setMode('pickStart', 'Tik op de kaart waar de teams gedropt worden');
+    $('pickEnd').onclick = () => setMode('pickEnd', 'Tik op de kaart waar de finish is');
+    $('genPreview').onclick = async () => {
+      gen.busy = true; renderTab();
+      try {
+        const r = await api('/api/admin/routegen/preview', { start: gen.start, end: gen.end });
+        gen.options = r.options; gen.chosen = 0;
+        map.fitBounds(L.latLngBounds(r.options.flatMap(o => o.line)).pad(0.1));
+        App.toast(r.options.length > 1 ? 'Twee routes gevonden: kies linksom of rechtsom' : 'Route gevonden', 'good');
+      } catch (e) { App.toast(e.message, 'bad'); }
+      gen.busy = false; renderTab(); drawGen();
+    };
+    document.querySelectorAll('[name=genOpt]').forEach(r => { r.onchange = () => { gen.chosen = Number(r.value); renderTab(); drawGen(); }; });
+    if ($('genCount')) $('genCount').onchange = e => { gen.count = Number(e.target.value); };
+    if ($('genReplace')) $('genReplace').onchange = e => { gen.replace = e.target.checked; };
+    if ($('genApply')) $('genApply').onclick = async () => {
+      if (gen.replace && !confirm('Alle huidige punten (met hun vragen) worden vervangen. Doorgaan?')) return;
+      const o = gen.options[gen.chosen];
+      try {
+        const r = await api('/api/admin/routegen/apply', { line: o.line, side: o.side, count: Number($('genCount').value), replace: gen.replace });
+        App.toast(`✅ ${r.added} punten toegevoegd, ${r.poi} bij een leuke plek. Vul nu de vragen in onder 📍 Punten.`, 'good');
+        gen.options = null; layers.gen.clearLayers(); renderTab(); drawGen();
+      } catch (e) { App.toast(e.message, 'bad'); }
+    };
+  }
+
   // Looproutes (de echte weg om het bos heen)
   function renderPaths() {
     const el = $('tab');
-    el.innerHTML = `<p class="muted" style="font-size:.85em">Teken de wegen die de teams moeten lopen, om het bos heen. Schatten worden langs deze route verstopt. Een route die door een verboden zone gaat wordt rood.</p>
+    if (!gen.start && state.points.length) gen.start = { lat: state.points[0].lat, lng: state.points[0].lng };
+    if (!gen.end && state.points.length > 1) { const l = state.points[state.points.length - 1]; gen.end = { lat: l.lat, lng: l.lng }; }
+    el.innerHTML = genCard() + `<p class="muted" style="font-size:.85em">Teken de wegen die de teams moeten lopen, om het bos heen. Schatten worden langs deze route verstopt. Een route die door een verboden zone gaat wordt rood.</p>
       ${state.paths.map(r => `<div class="list-item" data-path="${r.id}"><div class="grow"><b>${esc(r.name)}</b>
         <div class="muted" style="font-size:.8em">${r.line.length} punten · ${App.fmtDist(lineLength(r.line))}${lineCrossesZone(r.line) ? ' · <span style="color:var(--bad)">⚠️ door verboden gebied</span>' : ' · ✅ buiten het bos'}</div></div>
         <button class="btn danger small">Verwijderen</button></div>`).join('')}
@@ -297,6 +372,8 @@
       li.onclick = e => { if (!e.target.closest('button')) map.fitBounds(state.paths.find(r => r.id === li.dataset.path).line); };
     });
     $('showPath').onchange = e => api('/api/admin/settings', { showPath: e.target.checked });
+    bindGen();
+    drawGen();
     $('addPath').onclick = () => {
       draft = [];
       drawDraft();

@@ -53,8 +53,8 @@
       L.marker([t.lat, t.lng], { icon: L.divIcon({ className: '', html: `<div class="treasure-marker ${t.found ? 'claimed' : ''}">💎</div>`, iconSize: [34, 34], iconAnchor: [17, 17] }) }).addTo(layers.treasures);
     }
     if (!fitted) {
-      const all = [...data.points.map(p => [p.lat, p.lng]), ...data.paths.flatMap(p => p.line)];
-      if (all.length) { map.fitBounds(L.latLngBounds(all).pad(0.05)); fitted = true; }
+      const all = overviewBounds();
+      if (all) { map.fitBounds(all); fitted = true; }
     }
     if (!replay) drawTeams();
     renderBoard();
@@ -77,6 +77,45 @@
         .bindTooltip(esc(t.name), { permanent: true, direction: 'top', offset: [0, -14], className: 'tv-label' }).addTo(layers.teams);
     }
   }
+
+  function overviewBounds() {
+    const all = [...data.points.map(p => [p.lat, p.lng]), ...data.paths.flatMap(p => p.line),
+      ...data.teams.filter(t => t.pos).map(t => [t.pos.lat, t.pos.lng])];
+    return all.length ? L.latLngBounds(all).pad(0.05) : null;
+  }
+
+  // ---- camera: draait langzaam in 3D rond de kaart ----
+  const tilt = document.querySelector('.tv-tilt');
+  (function orbit(now) {
+    const s = now / 1000;
+    const x = 40 + 7 * Math.sin(s / 13);    // kantelen: meer of minder van bovenaf
+    const z = 22 * Math.sin(s / 37);        // rond de kaart draaien
+    tilt.style.transform = `rotateX(${x.toFixed(2)}deg) rotateZ(${z.toFixed(2)}deg)`;
+    requestAnimationFrame(orbit);
+  })(performance.now());
+
+  // ---- regie: om de beurt het overzicht en elk team van dichtbij, met in- en uitzoomen ----
+  let shot = 0;
+  function nextShot() {
+    if (!data || !map) return;
+    if (replay) { const b = overviewBounds(); if (b) map.flyToBounds(b, { duration: 3 }); return; }
+    const live = data.teams.filter(t => t.pos && Date.now() - t.pos.ts < 15 * 60000);
+    const shots = ['overzicht', ...live.map(t => t.id)];
+    const pick = shots[shot++ % shots.length];
+    const t = live.find(x => x.id === pick);
+    if (!t) {
+      const b = overviewBounds();
+      if (b) map.flyToBounds(b, { duration: 4 });
+      $('camLabel').textContent = '🎥 Overzicht';
+      return;
+    }
+    $('camLabel').textContent = '🎥 ' + t.name;
+    map.flyTo([t.pos.lat, t.pos.lng], 17, { duration: 4 });
+    // halverwege rustig een stukje uitzoomen, nog steeds op het team
+    setTimeout(() => { if (!replay && t.pos) map.flyTo([t.pos.lat, t.pos.lng], 15.5, { duration: 5 }); }, 7000);
+  }
+  setInterval(nextShot, 14000);
+  setTimeout(nextShot, 3000);
 
   const prevRank = {};
   function renderBoard() {

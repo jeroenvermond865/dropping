@@ -5,6 +5,7 @@ const id = (p = '') => p + crypto.randomBytes(5).toString('hex');
 
 const ARRIVE_POINTS = [50, 30, 20]; // 1e, 2e, daarna bij een punt
 const FASTEST_BONUS = 25;           // snelste juiste antwoord op een punt
+const WRONG_PENALTY = 10;           // aftrek per fout antwoord
 const FINISH_POINTS = [100, 60, 30];
 const MAX_TRIES = 3;
 const MAX_JOKERS = 3;
@@ -26,6 +27,7 @@ function seed() {
       lastIsFinish: true,
       treasureReveal: 100,
       showPath: false,
+      showMap: false,
     },
     points: [
       { id: id('p'), name: 'Start: Landgoed de Scheleberg', lat: 52.0455, lng: 5.6655, radius: 40, type: 'checkin',
@@ -64,7 +66,7 @@ function migrate(state) {
   for (const k of ['treasures', 'paths', 'photos', 'events', 'zones', 'teams', 'points']) state[k] = state[k] || [];
   state.progress = state.progress || {};
   state.sessions = state.sessions || {};
-  state.settings = { treasureReveal: 100, showPath: false, ...state.settings };
+  state.settings = { treasureReveal: 100, showPath: false, showMap: false, ...state.settings };
   return state;
 }
 
@@ -192,7 +194,7 @@ function finishPoint(state, team, p, r, correct) {
   r.correct = correct;
   r.doneAt = Date.now();
   const base = Number(p.points) || 100;
-  r.answerPoints = correct ? Math.max(base - 25 * Math.max(0, (r.tries || 1) - 1), 25) - (r.hint ? state.settings.hintCost : 0) : 0;
+  r.answerPoints = correct ? Math.max(base - WRONG_PENALTY * Math.max(0, (r.tries || 1) - 1), 0) - (r.hint ? state.settings.hintCost : 0) : 0;
   const pr = progressOf(state, team.id);
   if (!currentPoint(state, team) && !pr.finishedAt) {
     pr.finishedAt = Date.now();
@@ -340,6 +342,13 @@ function teamView(state, team) {
   const letters = r.filter(x => pr.results[x.id]?.correct && x.letter).map(x => x.letter);
   const done = r.filter(x => pr.results[x.id]?.done).map(x => ({ lat: x.lat, lng: x.lng, name: x.name }));
   const row = scoreboard(state).find(s => s.id === team.id);
+  // Wat er maximaal te halen was op de punten die al gedaan zijn, en op de hele tocht
+  const multi = state.teams.length > 1;
+  const maxFor = x => ARRIVE_POINTS[0] + (Number(x.points) || 100) + (multi && x.type !== 'checkin' ? FASTEST_BONUS : 0);
+  const possible = r.filter(x => pr.results[x.id]?.done).reduce((s, x) => s + maxFor(x), 0)
+    + state.treasures.filter(t => (t.claims || {})[team.id]).reduce((s, t) => s + (Number(t.points) || 0), 0)
+    + (pr.finishedAt ? FINISH_POINTS[0] : 0);
+  const maxTotal = r.reduce((s, x) => s + maxFor(x), 0) + FINISH_POINTS[0];
   let point = null;
   if (p) {
     point = {
@@ -354,7 +363,8 @@ function teamView(state, team) {
   }
   return {
     team: { id: team.id, name: team.name, color: team.color },
-    settings: { title: state.settings.title, testMode: state.settings.testMode, started: state.settings.started },
+    settings: { title: state.settings.title, testMode: state.settings.testMode, started: state.settings.started, hintCost: state.settings.hintCost, showMap: !!state.settings.showMap },
+    wrongPenalty: WRONG_PENALTY, possible, maxTotal,
     index: done.length, total: r.length, point,
     arrived: !!res.arrivedAt, tries: res.tries || 0, maxTries: MAX_TRIES,
     done, letters, jokers: pr.jokers || 0, mistUntil: pr.mistUntil || 0,

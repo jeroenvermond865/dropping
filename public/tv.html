@@ -13,12 +13,8 @@
   body { overflow: hidden; }
   .tv { position: fixed; inset: 0; display: grid; grid-template-columns: 1fr minmax(320px, 30vw); }
   .tv-stage { position: relative; overflow: hidden; perspective: 1400px; background: radial-gradient(ellipse at 50% 30%, #18245a, #05070f 70%); }
-  .tv-tilt { position: absolute; inset: -30% -25% -10%; transform-origin: 50% 65%; animation: sway 60s ease-in-out infinite; }
+  .tv-tilt { position: absolute; inset: -30% -25% -10%; transform-origin: 50% 65%; transform: rotateX(40deg); will-change: transform; }
   .tv-tilt #map { position: absolute; inset: 0; background: transparent; }
-  @keyframes sway {
-    0%, 100% { transform: rotateX(42deg) rotateZ(-5deg); }
-    50% { transform: rotateX(38deg) rotateZ(5deg); }
-  }
   .tv-stage::after { content: ""; position: absolute; inset: 0; pointer-events: none;
     background: linear-gradient(#070b18 0%, rgba(7, 11, 24, 0) 28%), radial-gradient(ellipse at 50% 60%, transparent 55%, rgba(5, 7, 15, .85)); }
   .tv-title { position: absolute; top: 24px; left: 28px; z-index: 10; }
@@ -54,7 +50,7 @@
 <div class="tv" id="tv" style="display:none">
   <div class="tv-stage">
     <div class="tv-tilt"><div id="map"></div></div>
-    <div class="tv-title"><h1 class="logo" id="title">Dropping</h1><span class="pill" id="live" style="color:var(--good)">● live</span></div>
+    <div class="tv-title"><h1 class="logo" id="title">Dropping</h1><span class="pill" id="live" style="color:var(--good)">● live</span> <span class="pill" id="camLabel">🎥 Overzicht</span></div>
     <div class="tv-clock">
       <button class="btn" id="replayBtn">▶ Replay van de routes</button>
       <span class="hud-chip" id="replayClock" style="display:none"></span>

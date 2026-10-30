@@ -668,7 +668,7 @@
           ${d.id === state.dropping.id ? '' : `<button class="btn small" data-open="${esc(d.id)}">✏️ Bewerken</button>`}
           <button class="btn ghost small" data-rename="${esc(d.id)}">Naam</button>
           <button class="btn ghost small" data-copy="${esc(d.id)}">Kopie</button>
-          ${state.droppings.length > 1 ? `<button class="btn ghost small danger" data-del="${esc(d.id)}">Verwijder</button>` : ''}
+          <button class="btn ghost small danger" data-del="${esc(d.id)}">🗑️ Verwijderen</button>
         </div></div>`).join('')}
       <hr style="border:0;border-top:1px solid var(--line);width:100%">
       <div><label>Nieuwe dropping</label><input id="d_name" placeholder="Bijv. Kinderroute of Rondje Lunteren"></div>
@@ -696,7 +696,8 @@
       b.onclick = async () => {
         const d = byId(b.dataset.del);
         if (!confirm(`"${d.name}" met alle punten, teams en scores verwijderen?`)) return;
-        await api('/api/admin/dropping/' + d.id, null, 'DELETE');
+        try { await api('/api/admin/dropping/' + d.id, null, 'DELETE'); }
+        catch (e) { return App.toast(e.message, 'bad'); }
         if (d.id === state.dropping.id) switchDropping(state.droppings.find(x => x.id !== d.id).id);
       };
     });
@@ -717,6 +718,7 @@
         <div><label>Kosten hint (pt)</label><input id="s_hint" type="number" value="${s.hintCost}"></div>
       </div>
       <label style="display:flex;gap:8px;color:var(--text)"><input type="checkbox" id="s_test" ${s.testMode ? 'checked' : ''}> Testmodus: inchecken kan overal (zet uit tijdens het echte spel!)</label>
+      <label style="display:flex;gap:8px;color:var(--text)"><input type="checkbox" id="s_map" ${s.showMap ? 'checked' : ''}> Kaart tonen aan spelers (uit = alleen kompaspijl en afstand)</label>
       <label style="display:flex;gap:8px;color:var(--text)"><input type="checkbox" id="s_finish" ${s.lastIsFinish ? 'checked' : ''}> Laatste punt is voor iedereen de finish</label>
       <div><label>Schatten zichtbaar vanaf (m)</label><input id="s_reveal" type="number" value="${s.treasureReveal}"></div>
       <a class="btn ghost" href="/tv?d=${esc(state.dropping.id)}" target="_blank">📺 Tv-scherm openen</a>
@@ -725,7 +727,7 @@
       <button class="btn danger" id="s_reset">Alle voortgang en scores wissen</button>
     </div>`;
     $('s_save').onclick = async () => {
-      await api('/api/admin/settings', { title: $('s_title').value, radius: Number($('s_radius').value), hintCost: Number($('s_hint').value), testMode: $('s_test').checked, lastIsFinish: $('s_finish').checked, treasureReveal: Number($('s_reveal').value) });
+      await api('/api/admin/settings', { title: $('s_title').value, radius: Number($('s_radius').value), hintCost: Number($('s_hint').value), testMode: $('s_test').checked, showMap: $('s_map').checked, lastIsFinish: $('s_finish').checked, treasureReveal: Number($('s_reveal').value) });
       App.toast('Instellingen opgeslagen', 'good');
     };
     $('s_reset').onclick = async () => { if (confirm('Echt alle scores wissen?')) await api('/api/admin/reset', {}); };

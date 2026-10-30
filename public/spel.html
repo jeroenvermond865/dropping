@@ -14,9 +14,11 @@
 <div class="game">
   <div id="map"></div>
   <div class="compass-only" id="compassOnly">
-    <div class="muted">🧭 Kompasmodus: geen kaart, alleen de pijl!</div>
+    <div class="muted" id="compassLabel">🧭 Kompasmodus: geen kaart, alleen de pijl!</div>
     <div class="dist" data-dist>–</div>
     <div class="compass"><div class="arrow" data-arrow></div></div>
+    <button class="btn small" id="compassBtn">🧭 Tik hier om het kompas aan te zetten</button>
+    <div class="muted" id="gpsInfo2" style="font-size:.8em"></div>
   </div>
   <div class="mist" id="mist"></div>
 
@@ -46,6 +48,8 @@
     <div class="card stack" id="sheet">Laden…</div>
   </div>
 </div>
+
+<div class="modal" id="modal"><div class="card stack" id="modalCard"></div></div>
 
 <div class="reveal" id="reveal">
   <div class="flip">

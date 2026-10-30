@@ -432,6 +432,7 @@ app.post('/api/admin/settings', adminAuth, (req, res) => {
   if (b.lastIsFinish !== undefined) s.lastIsFinish = !!b.lastIsFinish;
   if (b.treasureReveal !== undefined) s.treasureReveal = Math.min(Math.max(num(b.treasureReveal, 100), 20), 1000);
   if (b.showPath !== undefined) s.showPath = !!b.showPath;
+  if (b.showMap !== undefined) s.showMap = !!b.showMap;
   changed(req.d);
   res.json(s);
 });
@@ -514,7 +515,7 @@ app.post('/api/admin/dropping/:id', adminAuth, (req, res) => {
 });
 
 app.delete('/api/admin/dropping/:id', adminAuth, (req, res) => {
-  if (db.droppings.length <= 1) return res.status(400).json({ error: 'De laatste dropping kan niet weg.' });
+  if (db.droppings.length <= 1) return res.status(400).json({ error: 'De laatste dropping kan niet weg. Maak eerst een nieuwe aan.' });
   const d = findDropping(req.params.id);
   if (!d) return res.status(404).json({ error: 'Deze dropping bestaat niet meer.' });
   db.droppings = db.droppings.filter(x => x !== d);

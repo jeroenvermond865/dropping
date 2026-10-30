@@ -33,7 +33,7 @@ Open http://localhost:3000. Zonder database wordt alles opgeslagen in `data/stat
 ## Spelregels en punten
 
 - Als eerste bij een punt: 50 pt, als tweede 30, daarna 20. Wie als eerste aankomt krijgt een mist-joker (alleen met meer teams).
-- Goed antwoord: de punten van het punt, min 25 per extra poging en min de hintkosten. Na 3 foute pogingen door naar het volgende punt.
+- Goed antwoord: de punten van het punt, min 10 per fout antwoord en min de hintkosten. Na 3 foute pogingen door naar het volgende punt (0 punten, nooit minpunten).
 - Snelste goede antwoord op een punt: +25. Finish: 100 / 60 / 30 pt.
 - Verborgen schat: zichtbaar binnen 100 m, oppakken binnen 25 m. Eerste vinder krijgt alle punten, de rest de helft.
 - Foto-opdracht: het team kan meteen door, de punten komen na goedkeuring in het beheer.

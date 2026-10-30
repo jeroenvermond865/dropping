@@ -39,14 +39,14 @@
       if (p.coords.heading != null && !isNaN(p.coords.heading) && p.coords.speed > 0.8 && heading == null) gpsHeading = p.coords.heading;
       meMarker.setLatLng(me).addTo(map);
       meCircle.setLatLng(me).setRadius(me.acc).addTo(map);
-      $('gpsInfo').textContent = `GPS ±${Math.round(me.acc)} m` + (heading == null ? ' · tik de pijl voor kompas' : '');
+      $('gpsInfo').textContent = $('gpsInfo2').textContent = `GPS ±${Math.round(me.acc)} m`;
       if (Date.now() - lastSentPos > 5000) {
         lastSentPos = Date.now();
         App.api('/api/pos', me).catch(() => {});
       }
       updateNav();
     }, err => {
-      $('gpsInfo').textContent = err.code === 1 ? 'Geef de site toegang tot je locatie!' : 'Geen GPS-signaal';
+      $('gpsInfo').textContent = $('gpsInfo2').textContent = err.code === 1 ? 'Geef de site toegang tot je locatie!' : 'Geen GPS-signaal';
     }, { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 });
   } else {
     $('gpsInfo').textContent = 'Deze telefoon heeft geen GPS in de browser';
@@ -58,21 +58,27 @@
     if (e.webkitCompassHeading != null) heading = e.webkitCompassHeading;
     else if (e.absolute && e.alpha != null) heading = (360 - e.alpha) % 360;
     else return;
+    $('compassBtn').style.display = 'none';
     updateArrow();
   }
-  async function enableCompass() {
+  let compassOn = false;
+  async function enableCompass(quiet) {
+    if (compassOn) return;
     try {
       if (typeof DeviceOrientationEvent !== 'undefined' && DeviceOrientationEvent.requestPermission) {
-        if (await DeviceOrientationEvent.requestPermission() !== 'granted') return App.toast('Kompas niet toegestaan', 'bad');
+        if (await DeviceOrientationEvent.requestPermission() !== 'granted') return App.toast('Kompas niet toegestaan. Sta "beweging en richting" toe.', 'bad');
       }
+      compassOn = true;
       addEventListener('deviceorientationabsolute', onOrient);
       addEventListener('deviceorientation', onOrient);
-      App.toast('🧭 Kompas staat aan. Houd je telefoon plat.', 'good');
+      if (!quiet) App.toast('🧭 Kompas staat aan. Houd je telefoon plat.', 'good');
     } catch { App.toast('Kompas werkt niet op deze telefoon', 'bad'); }
   }
-  if (typeof DeviceOrientationEvent !== 'undefined' && !DeviceOrientationEvent.requestPermission) enableCompass();
-  $('compassSmall').onclick = enableCompass;
-  $('compassOnly').onclick = () => { if (heading == null) enableCompass(); };
+  // Android mag meteen; iPhone vraagt toestemming bij de eerste tik op het scherm.
+  if (typeof DeviceOrientationEvent !== 'undefined' && !DeviceOrientationEvent.requestPermission) enableCompass(true);
+  else document.addEventListener('click', () => enableCompass(), { once: true, capture: true });
+  $('compassSmall').onclick = () => enableCompass();
+  $('compassBtn').onclick = () => enableCompass();
 
   // Scherm aan houden tijdens de tocht
   async function wakeLock() { try { await navigator.wakeLock?.request('screen'); } catch {} }
@@ -130,12 +136,16 @@
     view = v;
     lastPointId = v.point ? v.point.id : null;
     $('teamChip').innerHTML = `<span class="dot" style="background:${App.esc(v.team.color)}"></span> ${App.esc(v.team.name)}`;
-    $('scoreChip').textContent = `${v.score} pt` + (v.rank ? ` · #${v.rank}` : '');
+    $('scoreChip').textContent = `${v.score} / ${v.possible} pt`;
     $('jokers').textContent = v.jokers;
     $('jokerBtn').style.display = v.others.length ? '' : 'none';
     $('pointNr').textContent = v.point ? `Punt ${v.index + 1} van ${v.total}` : 'Klaar!';
-    const compassOnly = v.point && v.point.kompas && !v.arrived;
+    // Zonder kaart (standaard) altijd het grote kompas; met kaart alleen bij kompaspunten
+    const showMap = v.settings.showMap;
+    $('map').style.visibility = showMap ? '' : 'hidden';
+    const compassOnly = v.point && (!showMap || (v.point.kompas && !v.arrived));
     $('navCard').style.display = v.point && !compassOnly ? '' : 'none';
+    $('compassLabel').textContent = v.point && v.point.kompas ? '🧭 Alleen op het kompas!' : v.point ? `Punt ${v.index + 1} van ${v.total}: ${v.point.name}` : '';
 
     // mist van een ander team
     clearTimeout(mistTimer);
@@ -160,6 +170,7 @@
       }
     } else { targetMarker.remove(); targetCircle.remove(); }
     $('compassOnly').style.display = compassOnly ? 'flex' : 'none';
+    $('compassBtn').style.display = heading == null ? '' : 'none';
 
     // verborgen schatten
     treasureLayer.clearLayers();
@@ -180,6 +191,10 @@
     if (prevId && v.point && prevId !== v.point.id) showReveal(v.point);
   }
 
+  function scoreHtml(v) {
+    return `<div class="muted" style="font-size:.85em">⭐ Jullie hebben <b>${v.score}</b> van de <b>${v.possible}</b> punten die tot nu toe te halen waren (hele tocht: ${v.maxTotal}).</div>`;
+  }
+
   function lettersHtml(v) {
     return v.letters.length ? `<div><label>Verzamelde letters</label><div class="letters">${v.letters.map((l, i) => `<div class="letter" style="animation-delay:${i * .1}s">${App.esc(l)}</div>`).join('')}</div></div>` : '';
   }
@@ -189,19 +204,20 @@
     const p = v.point;
     if (!p) {
       s.innerHTML = `<h2>🎉 Binnen!</h2>
-        <p>Jullie hebben alle ${v.total} punten gehad met <b>${v.score} punten</b>${v.rank ? ` en staan op plek <b>${v.rank}</b>` : ''}.</p>
+        <p>Jullie hebben alle ${v.total} punten gehad met <b>${v.score}</b> van de <b>${v.possible}</b> mogelijke punten${v.rank && v.others.length ? ` en staan op plek <b>${v.rank}</b>` : ''}.</p>
         ${lettersHtml(v)}<a class="btn block" href="/scorebord">🏆 Naar het scorebord</a>`;
       return;
     }
     if (!v.arrived) {
       s.innerHTML = `<div><h2>${App.esc(p.name)}</h2>${p.intro ? `<p class="muted" style="margin:0">${App.esc(p.intro)}</p>` : ''}</div>
         <button class="btn block" id="checkinBtn">📍 Inchecken</button>
-        <div class="muted" id="checkinHint" style="font-size:.85em;text-align:center"></div>${lettersHtml(v)}`;
+        <div class="muted" id="checkinHint" style="font-size:.85em;text-align:center"></div>${scoreHtml(v)}${lettersHtml(v)}`;
       $('checkinBtn').onclick = checkin;
       return;
     }
     const triesLeft = v.maxTries - v.tries;
-    let body = `<div><div class="muted" style="font-size:.85em">${App.esc(p.name)} · ${p.points} pt</div>
+    const penalty = p.type === 'keuze' || p.type === 'vraag' ? ` · −${v.wrongPenalty} per fout antwoord` : '';
+    let body = `<div><div class="muted" style="font-size:.85em">${App.esc(p.name)} · te verdienen: ${p.points} pt${penalty}</div>
       <h2>${App.esc(p.question || 'Opdracht')}</h2></div>`;
     if (p.type === 'keuze') {
       body += `<div class="options">${(p.options || []).map((o, i) => `<button class="opt" data-i="${i}">${String.fromCharCode(65 + i)}. ${App.esc(o)}</button>`).join('')}</div>`;
@@ -216,7 +232,8 @@
     }
     if (p.type !== 'opdracht' && p.type !== 'foto') body += `<div class="muted" style="font-size:.85em">Nog ${triesLeft} ${triesLeft === 1 ? 'poging' : 'pogingen'}</div>`;
     if (p.hint) body += `<div class="card" style="padding:12px;background:rgba(255,196,77,.12)">💡 ${App.esc(p.hint)}</div>`;
-    else if (p.hasHint) body += `<button class="btn ghost small" id="hintBtn">💡 Hint (kost punten)</button>`;
+    else if (p.hasHint) body += `<button class="btn ghost small" id="hintBtn">💡 Hint gebruiken (kost ${v.settings.hintCost} punten)</button>`;
+    body += scoreHtml(v);
     s.innerHTML = body;
     s.querySelectorAll('.opt').forEach(b => { b.onclick = () => send(b.dataset.i); });
     if ($('doneBtn')) $('doneBtn').onclick = () => send('gedaan');
@@ -226,7 +243,7 @@
       $('answer').onkeydown = e => { if (e.key === 'Enter') $('sendBtn').click(); };
     }
     if ($('hintBtn')) $('hintBtn').onclick = async () => {
-      if (!confirm('Een hint kost punten. Zeker weten?')) return;
+      if (await choose(`Een hint kost ${v.settings.hintCost} punten. Zeker weten?`, [{ label: `💡 Ja, hint gebruiken (−${v.settings.hintCost})`, value: 1 }, { label: 'Nee, zelf proberen', value: 0, ghost: true }]) !== 1) return;
       try { await App.api('/api/hint', {}); } catch (e) { App.toast(e.message, 'bad'); }
     };
   }
@@ -246,7 +263,7 @@
       const r = await App.api('/api/answer', { answer });
       if (r.correct) { App.confetti(); App.buzz([50, 50, 50, 50, 200]); App.toast(r.letter ? `✅ Goed! Je krijgt de letter ${r.letter}` : '✅ Goed zo!', 'good'); }
       else if (r.out) App.toast('❌ Helaas, door naar het volgende punt.', 'bad');
-      else { App.toast(`❌ Fout, nog ${r.triesLeft} ${r.triesLeft === 1 ? 'poging' : 'pogingen'}`, 'bad'); App.buzz(300); }
+      else { App.toast(`❌ Fout (−${view.wrongPenalty} punten), nog ${r.triesLeft} ${r.triesLeft === 1 ? 'poging' : 'pogingen'}`, 'bad'); App.buzz(300); }
     } catch (e) { App.toast(e.message, 'bad'); }
   }
 
@@ -293,20 +310,38 @@
   }
   $('revealGo').onclick = () => $('reveal').classList.remove('show');
 
+  // ---- keuzemenu ----
+  // Toont knoppen in een venster onderin; geeft de value van de gekozen knop terug, of null.
+  function choose(title, items) {
+    return new Promise(done => {
+      const m = $('modal'), c = $('modalCard');
+      c.innerHTML = `<h3>${App.esc(title)}</h3>` + items.map((it, i) => `<button class="btn block ${it.ghost ? 'ghost' : ''} ${it.danger ? 'danger' : ''}" data-i="${i}">${App.esc(it.label)}</button>`).join('')
+        + '<button class="btn block ghost" data-i="-1">Sluiten</button>';
+      const close = val => { m.classList.remove('show'); done(val); };
+      c.querySelectorAll('[data-i]').forEach(b => { b.onclick = () => close(b.dataset.i < 0 ? null : items[b.dataset.i].value); });
+      m.onclick = e => { if (e.target === m) close(null); };
+      m.classList.add('show');
+    });
+  }
+
   // ---- mist sturen & menu ----
   $('jokerBtn').onclick = async () => {
     if (!view.jokers) return App.toast('Win een mist-joker door als eerste bij een punt te zijn!');
-    const names = view.others.map((t, i) => `${i + 1}. ${t.name}`).join('\n');
-    const pick = prompt(`Naar welk team stuur je 60 seconden mist?\n${names}\n\nTyp het nummer:`);
-    const t = view.others[Number(pick) - 1];
+    const t = await choose('Naar welk team stuur je 60 seconden mist?', view.others.map(t => ({ label: '🌫️ ' + t.name, value: t })));
     if (!t) return;
     try { await App.api('/api/mist', { teamId: t.id }); App.toast(`🌫️ Mist gestuurd naar ${t.name}!`, 'good'); }
     catch (e) { App.toast(e.message, 'bad'); }
   };
-  $('menuBtn').onclick = () => {
-    const c = prompt('Menu:\n1. Scorebord\n2. Kompas aanzetten\n3. Uitloggen\n\nTyp het nummer:');
-    if (c === '1') location.href = '/scorebord';
-    if (c === '2') enableCompass();
-    if (c === '3' && confirm('Uitloggen?')) { App.store.set('teamToken', null); location.href = '/'; }
+  $('menuBtn').onclick = async () => {
+    const c = await choose('Menu', [
+      { label: '🏆 Scorebord', value: 'score' },
+      ...(compassOn ? [] : [{ label: '🧭 Kompas aanzetten', value: 'kompas' }]),
+      { label: '🚪 Uitloggen', value: 'uit', danger: true },
+    ]);
+    if (c === 'score') location.href = '/scorebord';
+    if (c === 'kompas') enableCompass();
+    if (c === 'uit' && await choose(`Uitloggen als ${view.team.name}? Je kunt daarna weer inloggen met het wachtwoord.`, [{ label: '🚪 Ja, uitloggen', value: 1, danger: true }]) === 1) {
+      App.store.set('teamToken', null); location.href = '/';
+    }
   };
 })();

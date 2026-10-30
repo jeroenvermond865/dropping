@@ -208,3 +208,10 @@ input[type=color] { padding: 2px; height: 42px; }
 .leaflet-container { font: inherit; background: #0b1020; }
 .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--bg2); color: var(--text); }
 .mode-banner .btn.ghost { color: #222; border-color: rgba(0, 0, 0, .3); }
+
+/* Keuzemenu in het spel */
+.modal { position: fixed; inset: 0; z-index: 2200; display: none; align-items: flex-end; justify-content: center; background: rgba(3, 6, 15, .7); padding: 12px 12px calc(12px + env(safe-area-inset-bottom)); }
+.modal.show { display: flex; }
+.modal .card { width: 100%; max-width: 460px; }
+.modal h3 { margin: 0; }
+#compassBtn { pointer-events: auto; }

@@ -54,7 +54,7 @@
     }
     if (!fitted) {
       const all = overviewBounds();
-      if (all) { map.fitBounds(all); fitted = true; }
+      if (all) { map.fitBounds(all, safePad()); fitted = true; }
     }
     if (!replay) drawTeams();
     renderBoard();
@@ -95,27 +95,78 @@
   })(performance.now());
 
   // ---- regie: om de beurt het overzicht en elk team van dichtbij, met in- en uitzoomen ----
+  // Door de 3D-kanteling is niet de hele kaart zichtbaar. Teams moeten in het middenstuk
+  // rond het draaipunt van de kanteling blijven (ongeveer 65% van boven).
+  const SAFE = { left: 0.3, right: 0.3, top: 0.5, bottom: 0.2 };
+  function safePad() {
+    const s = map.getSize();
+    return { paddingTopLeft: [s.x * SAFE.left, s.y * SAFE.top], paddingBottomRight: [s.x * SAFE.right, s.y * SAFE.bottom] };
+  }
+  // Kaartmidden zo kiezen dat dit punt op het draaipunt staat in plaats van in het midden
+  function focusCenter(ll, zoom) {
+    const s = map.getSize();
+    return map.unproject(map.project(ll, zoom).subtract([0, s.y * 0.15]), zoom);
+  }
+  function inView(ll) {
+    const s = map.getSize(), p = map.latLngToContainerPoint(ll);
+    return p.x > s.x * 0.22 && p.x < s.x * 0.78 && p.y > s.y * 0.4 && p.y < s.y * 0.86;
+  }
+  const liveTeams = () => data ? data.teams.filter(t => t.pos && Date.now() - t.pos.ts < 15 * 60000) : [];
+  let cam = { type: 'overzicht' }, flying = false, zoomOutTimer;
+  watchFlying();
+  function watchFlying() {
+    if (!map) return setTimeout(watchFlying, 500);
+    map.on('movestart', () => { flying = true; });
+    map.on('moveend', () => { flying = false; });
+  }
+  function overview(duration) {
+    const b = overviewBounds();
+    if (b) map.flyToBounds(b, { ...safePad(), duration });
+  }
+  // Inzoomen op één team, maar nooit zo ver dat de andere teams uit beeld raken
+  function focusTeam(t, zoom, duration) {
+    const c = L.latLng(t.pos.lat, t.pos.lng);
+    const others = liveTeams().filter(x => x.id !== t.id).map(x => L.latLng(x.pos.lat, x.pos.lng));
+    if (others.length) {
+      // spiegelen rond het team, zodat het team in het midden blijft
+      const pts = [c, ...others, ...others.map(o => L.latLng(2 * c.lat - o.lat, 2 * c.lng - o.lng))];
+      const s = map.getSize();
+      zoom = Math.min(zoom, map.getBoundsZoom(L.latLngBounds(pts), false, L.point(s.x * 0.5, s.y * 0.6)));
+    }
+    map.flyTo(focusCenter(c, zoom), zoom, { duration });
+  }
+
   let shot = 0;
   function nextShot() {
     if (!data || !map) return;
-    if (replay) { const b = overviewBounds(); if (b) map.flyToBounds(b, { duration: 3 }); return; }
-    const live = data.teams.filter(t => t.pos && Date.now() - t.pos.ts < 15 * 60000);
+    clearTimeout(zoomOutTimer);
+    if (replay) { cam = { type: 'overzicht' }; return overview(3); }
+    const live = liveTeams();
     const shots = ['overzicht', ...live.map(t => t.id)];
     const pick = shots[shot++ % shots.length];
     const t = live.find(x => x.id === pick);
     if (!t) {
-      const b = overviewBounds();
-      if (b) map.flyToBounds(b, { duration: 4 });
+      cam = { type: 'overzicht' };
       $('camLabel').textContent = '🎥 Overzicht';
-      return;
+      return overview(4);
     }
+    cam = { type: 'team', id: t.id, zoom: 17 };
     $('camLabel').textContent = '🎥 ' + t.name;
-    map.flyTo([t.pos.lat, t.pos.lng], 17, { duration: 4 });
+    focusTeam(t, 17, 4);
     // halverwege rustig een stukje uitzoomen, nog steeds op het team
-    setTimeout(() => { if (!replay && t.pos) map.flyTo([t.pos.lat, t.pos.lng], 15.5, { duration: 5 }); }, 7000);
+    zoomOutTimer = setTimeout(() => { if (!replay && t.pos) { cam.zoom = 15.5; focusTeam(t, 15.5, 5); } }, 7000);
   }
   setInterval(nextShot, 14000);
   setTimeout(nextShot, 3000);
+
+  // Bewaker: loopt een team uit beeld, dan stuurt de camera meteen bij
+  setInterval(() => {
+    if (!data || !map || flying) return;
+    if (cam.type === 'team') {
+      const t = liveTeams().find(x => x.id === cam.id);
+      if (t && liveTeams().some(x => !inView([x.pos.lat, x.pos.lng]))) focusTeam(t, cam.zoom || map.getZoom(), 1.5);
+    } else if (liveTeams().some(t => !inView([t.pos.lat, t.pos.lng]))) overview(2);
+  }, 2000);
 
   const prevRank = {};
   function renderBoard() {

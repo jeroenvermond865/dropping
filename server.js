@@ -572,6 +572,7 @@ function migrateDb(raw) {
   db = migrateDb(await store.init());
   store.save(db);
   server.listen(PORT, () => console.log(`Dropping draait op poort ${PORT} (${store.usesDatabase() ? 'Postgres' : 'bestand'})`));
+  require('./inspect')(db);
 })();
 
 for (const sig of ['SIGTERM', 'SIGINT']) {

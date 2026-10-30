@@ -163,10 +163,30 @@ function teamAction(fn) {
   }];
 }
 
-app.post('/api/checkin', ...teamAction(req => game.checkin(req.d, req.team, {
-  lat: num(req.body.lat, null), lng: num(req.body.lng, null), acc: num(req.body.acc, 0),
-})));
-app.post('/api/answer', ...teamAction(req => game.answer(req.d, req.team, clean(req.body.answer, 200))));
+// Live meekijken op het tv-scherm: opdracht, antwoord, punten en foto's
+function tvLive(d, team, ev) {
+  io.to('tv:' + d.id).emit('live', { ...ev, team: { id: team.id, name: team.name, color: team.color }, ts: Date.now() });
+}
+const tvPoint = p => ({ name: p.name, type: p.type, question: p.question || '', options: p.type === 'keuze' ? p.options || [] : [], points: Number(p.points) || 100 });
+
+app.post('/api/checkin', ...teamAction(req => {
+  const p = game.currentPoint(req.d, req.team);
+  const out = game.checkin(req.d, req.team, { lat: num(req.body.lat, null), lng: num(req.body.lng, null), acc: num(req.body.acc, 0) });
+  if (out.ok && out.rank && p) tvLive(req.d, req.team, { kind: p.type === 'checkin' ? 'aangekomen' : 'opdracht', point: tvPoint(p), rank: out.rank });
+  return out;
+}));
+app.post('/api/answer', ...teamAction(req => {
+  const p = game.currentPoint(req.d, req.team);
+  const value = clean(req.body.answer, 200);
+  const out = game.answer(req.d, req.team, value);
+  if (out.ok && p) {
+    const r = game.progressOf(req.d, req.team.id).results[p.id] || {};
+    const shown = p.type === 'keuze' ? (p.options || [])[Number(value)] || value : p.type === 'opdracht' ? 'Opdracht gedaan ✅' : value;
+    tvLive(req.d, req.team, { kind: 'antwoord', point: tvPoint(p), answer: shown, correct: !!out.correct, out: !!out.out,
+      triesLeft: out.triesLeft, points: out.correct || out.out ? r.answerPoints || 0 : null });
+  }
+  return out;
+}));
 app.post('/api/hint', ...teamAction(req => game.useHint(req.d, req.team)));
 app.post('/api/mist', ...teamAction(req => {
   const out = game.sendMist(req.d, req.team, req.body.teamId);
@@ -214,9 +234,11 @@ app.post('/api/pos', teamAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/treasure/:id', ...teamAction(req => game.claimTreasure(req.d, req.team, req.params.id, {
-  lat: num(req.body.lat, null), lng: num(req.body.lng, null), acc: num(req.body.acc, 0),
-})));
+app.post('/api/treasure/:id', ...teamAction(req => {
+  const out = game.claimTreasure(req.d, req.team, req.params.id, { lat: num(req.body.lat, null), lng: num(req.body.lng, null), acc: num(req.body.acc, 0) });
+  if (out.ok) tvLive(req.d, req.team, { kind: 'schat', points: out.points, first: out.first });
+  return out;
+}));
 
 app.post('/api/photo', express.json({ limit: '6mb' }), teamAuth, async (req, res) => {
   const p = game.currentPoint(req.d, req.team);
@@ -233,6 +255,7 @@ app.post('/api/photo', express.json({ limit: '6mb' }), teamAuth, async (req, res
   changed(req.d);
   // Meteen een venster in het beheer om de foto te beoordelen
   io.to('admin:' + req.d.id).emit('newPhoto', { ...out.photo, teamName: req.team.name });
+  tvLive(req.d, req.team, { kind: 'foto', photoId: out.photo.id, point: { name: out.photo.pointName }, max: out.photo.max });
   res.json({ ok: true, letter: out.letter });
 });
 
@@ -413,6 +436,8 @@ app.post('/api/admin/photo/:id', adminAuth, (req, res) => {
   if (out.error) return res.status(400).json(out);
   changed(req.d);
   io.to('team:' + out.teamId).emit('photoJudged', out);
+  const team = req.d.teams.find(t => t.id === out.teamId);
+  if (team) tvLive(req.d, team, { kind: 'fotoBeoordeeld', photoId: req.params.id, point: { name: out.pointName }, approve: out.approve, points: out.points, max: out.max });
   res.json(out);
 });
 

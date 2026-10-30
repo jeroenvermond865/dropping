@@ -10,6 +10,7 @@
     const socket = io({ auth: { token, tv: true, dropping } });
     socket.on('connect_error', () => {});
     socket.on('tv', d => { data = d; render(); });
+    socket.on('live', showLive);
     socket.on('pos', p => {
       const t = data && data.teams.find(x => x.id === p.teamId);
       if (!t) return;
@@ -61,6 +62,12 @@
     renderEvents();
   }
 
+  // Een team zonder gps-signaal in de laatste 4 minuten telt niet meer mee en verdwijnt met een plop
+  const STALE_MS = 4 * 60000;
+  const isLive = t => t.pos && Date.now() - t.pos.ts < STALE_MS;
+  const wasLive = {};
+  setInterval(() => { if (data && !replay) drawTeams(); }, 5000);
+
   function drawTeams(untilTs) {
     layers.trails.clearLayers();
     layers.teams.clearLayers();
@@ -71,16 +78,23 @@
         L.polyline(line, { color: t.color, weight: 9, opacity: 0.18 }).addTo(layers.trails);
         L.polyline(line, { color: t.color, weight: 3, opacity: 0.9 }).addTo(layers.trails);
       }
-      const at = untilTs ? trail[trail.length - 1] : (t.pos ? [t.pos.lat, t.pos.lng] : trail[trail.length - 1]);
+      let plop = false;
+      if (!untilTs) {
+        const live = isLive(t);
+        plop = !live && wasLive[t.id];
+        wasLive[t.id] = live;
+        if (!live && !plop) continue;
+      }
+      const at = untilTs ? trail[trail.length - 1] : [t.pos.lat, t.pos.lng];
       if (!at) continue;
-      L.marker([at[0], at[1]], { icon: L.divIcon({ className: '', html: `<div class="tv-team" style="background:${esc(t.color)}"></div>`, iconSize: [26, 26], iconAnchor: [13, 13] }), zIndexOffset: 1000 })
+      L.marker([at[0], at[1]], { icon: L.divIcon({ className: '', html: `<div class="tv-team ${plop ? 'plop' : ''}" style="background:${esc(t.color)}"></div>`, iconSize: [26, 26], iconAnchor: [13, 13] }), zIndexOffset: 1000 })
         .bindTooltip(esc(t.name), { permanent: true, direction: 'top', offset: [0, -14], className: 'tv-label' }).addTo(layers.teams);
     }
   }
 
   function overviewBounds() {
     const all = [...data.points.map(p => [p.lat, p.lng]), ...data.paths.flatMap(p => p.line),
-      ...data.teams.filter(t => t.pos).map(t => [t.pos.lat, t.pos.lng])];
+      ...data.teams.filter(isLive).map(t => [t.pos.lat, t.pos.lng])];
     return all.length ? L.latLngBounds(all).pad(0.05) : null;
   }
 
@@ -97,21 +111,24 @@
   // ---- regie: om de beurt het overzicht en elk team van dichtbij, met in- en uitzoomen ----
   // Door de 3D-kanteling is niet de hele kaart zichtbaar. Teams moeten in het middenstuk
   // rond het draaipunt van de kanteling blijven (ongeveer 65% van boven).
-  const SAFE = { left: 0.3, right: 0.3, top: 0.5, bottom: 0.2 };
+  // Staat er een pop-up rechts in beeld, dan schuiven de teams naar het linkerdeel.
+  let popOpen = false;
+  const safeBox = () => popOpen ? { left: 0.25, right: 0.55, top: 0.53, bottom: 0.25 } : { left: 0.35, right: 0.35, top: 0.53, bottom: 0.25 };
   function safePad() {
-    const s = map.getSize();
-    return { paddingTopLeft: [s.x * SAFE.left, s.y * SAFE.top], paddingBottomRight: [s.x * SAFE.right, s.y * SAFE.bottom] };
+    const s = map.getSize(), b = safeBox();
+    return { paddingTopLeft: [s.x * b.left, s.y * b.top], paddingBottomRight: [s.x * b.right, s.y * b.bottom] };
   }
   // Kaartmidden zo kiezen dat dit punt op het draaipunt staat in plaats van in het midden
   function focusCenter(ll, zoom) {
     const s = map.getSize();
-    return map.unproject(map.project(ll, zoom).subtract([0, s.y * 0.15]), zoom);
+    return map.unproject(map.project(ll, zoom).subtract([popOpen ? -s.x * 0.15 : 0, s.y * 0.15]), zoom);
   }
   function inView(ll) {
     const s = map.getSize(), p = map.latLngToContainerPoint(ll);
-    return p.x > s.x * 0.22 && p.x < s.x * 0.78 && p.y > s.y * 0.4 && p.y < s.y * 0.86;
+    const [x0, x1] = popOpen ? [0.2, 0.48] : [0.3, 0.7];
+    return p.x > s.x * x0 && p.x < s.x * x1 && p.y > s.y * 0.46 && p.y < s.y * 0.8;
   }
-  const liveTeams = () => data ? data.teams.filter(t => t.pos && Date.now() - t.pos.ts < 15 * 60000) : [];
+  const liveTeams = () => data ? data.teams.filter(isLive) : [];
   let cam = { type: 'overzicht' }, flying = false, zoomOutTimer;
   watchFlying();
   function watchFlying() {
@@ -131,7 +148,7 @@
       // spiegelen rond het team, zodat het team in het midden blijft
       const pts = [c, ...others, ...others.map(o => L.latLng(2 * c.lat - o.lat, 2 * c.lng - o.lng))];
       const s = map.getSize();
-      zoom = Math.min(zoom, map.getBoundsZoom(L.latLngBounds(pts), false, L.point(s.x * 0.5, s.y * 0.6)));
+      zoom = Math.min(zoom, map.getBoundsZoom(L.latLngBounds(pts), false, L.point(s.x * (popOpen ? 0.8 : 0.66), s.y * 0.72)));
     }
     map.flyTo(focusCenter(c, zoom), zoom, { duration });
   }
@@ -167,6 +184,43 @@
       if (t && liveTeams().some(x => !inView([x.pos.lat, x.pos.lng]))) focusTeam(t, cam.zoom || map.getZoom(), 1.5);
     } else if (liveTeams().some(t => !inView([t.pos.lat, t.pos.lng]))) overview(2);
   }, 2000);
+
+  // ---- live pop-ups: opdracht, antwoord, punten en foto's ----
+  // Blijft 45 seconden staan, of tot er iets nieuws gebeurt.
+  let liveTimer;
+  function showLive(ev) {
+    const el = $('livePop');
+    const p = ev.point || {};
+    const head = `<div class="lp-team"><span class="dot" style="background:${esc(ev.team.color)}"></span> ${esc(ev.team.name)}</div>`;
+    let body = '';
+    if (ev.kind === 'opdracht') {
+      body = `<div class="lp-kind">📍 Bij ${esc(p.name)}${ev.rank === 1 ? ' · als eerste! 🥇' : ''}</div>
+        <div class="lp-q">${esc(p.question || 'Opdracht')}</div>
+        ${p.options.length ? `<div class="lp-opts">${p.options.map((o, i) => `<div>${String.fromCharCode(65 + i)}. ${esc(o)}</div>`).join('')}</div>` : ''}
+        <div class="lp-meta">Te verdienen: ${p.points} punten</div>`;
+    } else if (ev.kind === 'aangekomen') {
+      body = `<div class="lp-kind">📍 Aangekomen bij</div><div class="lp-q">${esc(p.name)}</div>`;
+    } else if (ev.kind === 'antwoord') {
+      const verdict = ev.correct ? `<div class="lp-good">✅ Goed! +${ev.points} punten</div>`
+        : ev.out ? `<div class="lp-bad">❌ Fout, en geen pogingen meer. 0 punten</div>`
+        : `<div class="lp-bad">❌ Fout! Nog ${ev.triesLeft} ${ev.triesLeft === 1 ? 'poging' : 'pogingen'}</div>`;
+      body = `<div class="lp-kind">${esc(p.name)}</div><div class="lp-q">${esc(p.question || '')}</div>
+        <div class="lp-answer">💬 ${esc(ev.answer)}</div>${verdict}`;
+    } else if (ev.kind === 'foto') {
+      body = `<div class="lp-kind">📸 Foto ingestuurd bij ${esc(p.name)}</div>
+        <img src="/foto/${esc(ev.photoId)}"><div class="lp-meta">Wacht op beoordeling (max ${ev.max} punten)</div>`;
+    } else if (ev.kind === 'fotoBeoordeeld') {
+      body = `<div class="lp-kind">📸 Foto bij ${esc(p.name)}</div><img src="/foto/${esc(ev.photoId)}">
+        ${ev.approve ? `<div class="lp-good">✅ Goedgekeurd: +${ev.points} van ${ev.max} punten</div>` : '<div class="lp-bad">❌ Afgekeurd</div>'}`;
+    } else if (ev.kind === 'schat') {
+      body = `<div class="lp-q">💎 Schat gevonden${ev.first ? ' als eerste' : ''}!</div><div class="lp-good">+${ev.points} punten</div>`;
+    } else return;
+    el.innerHTML = head + body;
+    el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
+    popOpen = true;
+    clearTimeout(liveTimer);
+    liveTimer = setTimeout(() => { el.classList.remove('show'); popOpen = false; }, 45000);
+  }
 
   const prevRank = {};
   function renderBoard() {

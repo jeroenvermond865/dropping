@@ -18,7 +18,9 @@
   const trailLayer = L.layerGroup().addTo(map);
   const legLayer = L.layerGroup().addTo(map);
   const tileLayer = layers['Nacht'];
-  const targetMarker = L.marker([0, 0], { icon: L.divIcon({ className: '', html: '<div class="target-marker"></div>', iconSize: [26, 26], iconAnchor: [13, 13] }) });
+  // Volgende punt: een vlag met de naam; jouw eigen gps: de knipperende blauwe stip
+  const targetMarker = L.marker([0, 0], { icon: L.divIcon({ className: '', html: '<div class="next-marker">🚩</div>', iconSize: [30, 30], iconAnchor: [6, 28] }) });
+  const prevMarker = L.marker([0, 0], { icon: L.divIcon({ className: '', html: '<div class="prev-marker"></div>', iconSize: [12, 12], iconAnchor: [6, 6] }) });
   const targetCircle = L.circle([0, 0], { radius: 30, color: '#4dd2ff', weight: 1, fillOpacity: 0.08 });
   const meMarker = L.marker([0, 0], { icon: L.divIcon({ className: '', html: '<div class="me-marker"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }), zIndexOffset: 1000 });
   const meCircle = L.circle([0, 0], { radius: 10, color: '#b06bff', weight: 1, fillOpacity: 0.1 });
@@ -186,10 +188,12 @@
     }
     if (!showMap) { zoneLayer.clearLayers(); trailLayer.clearLayers(); }
     if (v.point) {
-      targetMarker.setLatLng(v.point).addTo(map);
+      targetMarker.setLatLng(v.point).addTo(map)
+        .unbindTooltip().bindTooltip('Volgende: ' + App.esc(v.point.name), { permanent: true, direction: 'right', offset: [14, -14], className: 'next-label' });
+      if (v.point.leg && v.point.leg.length > 1) prevMarker.setLatLng(v.point.leg[0]).addTo(map); else prevMarker.remove();
       targetCircle.setLatLng(v.point).setRadius(v.point.radius).addTo(map);
       if (!fitted || prevId !== v.point.id) { fitted = true; lastFit = 0; }
-    } else { targetMarker.remove(); targetCircle.remove(); }
+    } else { targetMarker.remove(); targetCircle.remove(); prevMarker.remove(); }
     $('compassOnly').style.display = compassOnly ? 'flex' : 'none';
     $('compassBtn').style.display = heading == null ? '' : 'none';
 
@@ -358,10 +362,14 @@
     const c = await choose('Menu', [
       { label: '🏆 Scorebord', value: 'score' },
       ...(compassOn ? [] : [{ label: '🧭 Kompas aanzetten', value: 'kompas' }]),
+      ...(view.settings.testMode ? [{ label: '🔄 Opnieuw beginnen (testmodus)', value: 'reset' }] : []),
       { label: '🚪 Uitloggen', value: 'uit', danger: true },
     ]);
     if (c === 'score') location.href = '/scorebord';
     if (c === 'kompas') enableCompass();
+    if (c === 'reset' && await choose('Alle punten en de score van jullie team wissen en opnieuw beginnen?', [{ label: '🔄 Ja, opnieuw beginnen', value: 1, danger: true }]) === 1) {
+      try { await App.api('/api/restart', {}); App.toast('🔄 Jullie beginnen opnieuw bij het eerste punt', 'good'); } catch (e) { App.toast(e.message, 'bad'); }
+    }
     if (c === 'uit' && await choose(`Uitloggen als ${view.team.name}? Je kunt daarna weer inloggen met het wachtwoord.`, [{ label: '🚪 Ja, uitloggen', value: 1, danger: true }]) === 1) {
       App.store.set('teamToken', null); location.href = '/';
     }

@@ -182,6 +182,16 @@ function teamPos(teamId, token, pos) {
   return { lat: avg('lat'), lng: avg('lng'), acc: Math.min(...recent.map(p => p.acc)) };
 }
 
+// Spelers kunnen tijdens het testen zelf opnieuw beginnen.
+app.post('/api/restart', teamAuth, (req, res) => {
+  if (!req.d.settings.testMode) return res.status(400).json({ error: 'Opnieuw beginnen kan alleen in testmodus. Vraag het beheer.' });
+  delete req.d.progress[req.team.id];
+  for (const t of req.d.treasures) if (t.claims) delete t.claims[req.team.id];
+  req.d.photos = req.d.photos.filter(p => p.teamId !== req.team.id);
+  changed(req.d);
+  res.json({ ok: true });
+});
+
 app.post('/api/pos', teamAuth, (req, res) => {
   const lat = num(req.body.lat, null), lng = num(req.body.lng, null);
   if (lat === null || lng === null) return res.status(400).json({ error: 'Ongeldige positie.' });

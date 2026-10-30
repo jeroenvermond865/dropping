@@ -622,9 +622,11 @@
         <div class="row wrap">
           ${pos ? `<button class="btn ghost small" data-find="${r.id}">📍 Toon</button>` : ''}
           ${cur ? `<button class="btn ghost small" data-skip="${r.id}">⏭️ Punt overslaan</button>` : ''}
-          <button class="btn ghost small" data-reset="${r.id}">↺ Opnieuw</button>
+          <button class="btn ghost small" data-reset="${r.id}">🔄 Team resetten</button>
         </div></div>`;
     }).join('') || '<p class="muted">Nog geen teams.</p>';
+    el.insertAdjacentHTML('beforeend', '<button class="btn danger block" id="liveReset">🔄 Hele spel resetten (alle scores op 0)</button>');
+    $('liveReset').onclick = resetAll;
     el.querySelectorAll('[data-find]').forEach(b => { b.onclick = () => { const p = state.progress[b.dataset.find].pos; map.setView([p.lat, p.lng], 17); }; });
     el.querySelectorAll('[data-skip]').forEach(b => { b.onclick = async () => { if (confirm('Dit team naar het volgende punt zetten?')) await api('/api/admin/skip/' + b.dataset.skip, {}); }; });
     el.querySelectorAll('[data-reset]').forEach(b => { b.onclick = async () => { if (confirm('Alle voortgang van dit team wissen?')) await api('/api/admin/reset', { teamId: b.dataset.reset }); }; });
@@ -707,6 +709,12 @@
     };
   }
 
+  async function resetAll() {
+    if (!confirm('Het hele spel resetten? Alle teams beginnen opnieuw bij het eerste punt en alle scores, foto\'s en gevonden schatten worden gewist. Route, punten en teams blijven staan.')) return;
+    await api('/api/admin/reset', {});
+    App.toast('🔄 Spel gereset', 'good');
+  }
+
   // Instellingen
   function renderSettings() {
     const s = state.settings;
@@ -724,13 +732,13 @@
       <a class="btn ghost" href="/tv?d=${esc(state.dropping.id)}" target="_blank">📺 Tv-scherm openen</a>
       <button class="btn" id="s_save">Opslaan</button>
       <hr style="border:0;border-top:1px solid var(--line);width:100%">
-      <button class="btn danger" id="s_reset">Alle voortgang en scores wissen</button>
+      <button class="btn danger" id="s_reset">🔄 Spel resetten: alle voortgang en scores wissen</button>
     </div>`;
     $('s_save').onclick = async () => {
       await api('/api/admin/settings', { title: $('s_title').value, radius: Number($('s_radius').value), hintCost: Number($('s_hint').value), testMode: $('s_test').checked, showMap: $('s_map').checked, lastIsFinish: $('s_finish').checked, treasureReveal: Number($('s_reveal').value) });
       App.toast('Instellingen opgeslagen', 'good');
     };
-    $('s_reset').onclick = async () => { if (confirm('Echt alle scores wissen?')) await api('/api/admin/reset', {}); };
+    $('s_reset').onclick = resetAll;
   }
 
   start();

@@ -233,3 +233,8 @@ input[type=color] { padding: 2px; height: 42px; }
 .game.nomap .compass-only .compass { width: 30vmin; height: 30vmin; max-width: 150px; max-height: 150px; }
 .game.nomap .compass-only .dist { font-size: 2.4rem; }
 .game.nomap .leaflet-control-attribution { display: none; }
+
+/* Codewoord bij de finish */
+.code-row { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+.code-slot { width: 34px; height: 44px; padding: 0; border-radius: 10px; text-align: center; font: 700 1.4rem "Space Grotesk", sans-serif; text-transform: uppercase; }
+.code-slot.got { display: grid; place-items: center; background: rgba(62, 224, 143, .2); border: 2px solid var(--good); color: var(--good); }

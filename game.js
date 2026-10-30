@@ -6,6 +6,9 @@ const id = (p = '') => p + crypto.randomBytes(5).toString('hex');
 const ARRIVE_POINTS = [50, 30, 20]; // 1e, 2e, daarna bij een punt
 const FASTEST_BONUS = 25;           // snelste juiste antwoord op een punt
 const WRONG_PENALTY = 10;           // aftrek per fout antwoord
+const CODE_LETTER = 20;             // codewoord: per verdiende letter
+const CODE_GUESS = 10;              // codewoord: per zelf goed ingevulde letter
+const CODE_WHOLE = 50;              // codewoord: hele woord goed
 const FINISH_POINTS = [100, 60, 30];
 const MAX_TRIES = 3;
 const MAX_JOKERS = 3;
@@ -162,9 +165,67 @@ function checkin(state, team, pos) {
   return { ok: true, rank: r.rank, first: rank === 0 };
 }
 
+// ---- codewoord ----
+
+// Een letter verdien je alleen met een goed antwoord in één keer en minstens de helft van de punten.
+function earnsLetter(p, r) {
+  if (!p.letter || !r || !r.done || !r.correct || (r.tries || 1) > 1) return false;
+  return (r.answerPoints || 0) >= (Number(p.points) || 100) / 2;
+}
+
+// Het woord: uit de instellingen, anders het eerste goede antwoord van de finishvraag.
+function codeword(state) {
+  const last = state.points[state.points.length - 1];
+  const w = state.settings.codeword || (last && String(last.answers || '').split('|')[0]) || '';
+  return state.settings.lastIsFinish && state.points.length > 2 ? w.toUpperCase().replace(/[^A-Z]/g, '') : '';
+}
+
+const isCodewordPoint = (state, p) => !!(p && codeword(state) && state.points[state.points.length - 1].id === p.id);
+
+// Elke letter van een punt krijgt een vaste plek in het woord.
+function letterSlots(state, word) {
+  const used = new Set(), slots = {};
+  for (const p of state.points) {
+    const ch = String(p.letter || '').toUpperCase();
+    const i = [...word].findIndex((c, k) => c === ch && !used.has(k));
+    if (i >= 0) { used.add(i); slots[p.id] = i; }
+  }
+  return slots;
+}
+
+// Het woord met de verdiende letters ingevuld en lege plekken (null) voor de rest.
+function codewordBoard(state, team) {
+  const word = codeword(state);
+  const pr = progressOf(state, team.id);
+  const board = Array(word.length).fill(null);
+  const slots = letterSlots(state, word);
+  for (const p of state.points) if (slots[p.id] !== undefined && earnsLetter(p, pr.results[p.id])) board[slots[p.id]] = word[slots[p.id]];
+  return { word, board };
+}
+
+function solveCodeword(state, team, guess) {
+  const p = currentPoint(state, team);
+  if (!isCodewordPoint(state, p)) return { error: 'Je bent nog niet bij de finish.' };
+  const r = progressOf(state, team.id).results[p.id];
+  if (!r || !r.arrivedAt) return { error: 'Eerst inchecken bij de finish.' };
+  const { word, board } = codewordBoard(state, team);
+  const g = String(guess || '').toUpperCase().padEnd(word.length, ' ');
+  let earned = 0, guessed = 0;
+  board.forEach((c, i) => { if (c) earned++; else if (g[i] === word[i]) guessed++; });
+  const whole = earned + guessed === word.length;
+  r.tries = 1;
+  finishPoint(state, team, p, r, whole);
+  r.answerPoints = earned * CODE_LETTER + guessed * CODE_GUESS + (whole ? CODE_WHOLE : 0);
+  r.codeword = { guess: g.trim(), earned, guessed, whole };
+  event(state, `🔤 ${team.name} ${whole ? 'raadde het codewoord!' : 'vulde het codewoord in'} (+${r.answerPoints} pt)`, team.id);
+  return { ok: true, word, board, guess: g, earned, guessed, whole, points: r.answerPoints,
+    parts: { letters: earned * CODE_LETTER, guessed: guessed * CODE_GUESS, whole: whole ? CODE_WHOLE : 0 } };
+}
+
 function answer(state, team, value) {
   const p = currentPoint(state, team);
   if (!p) return { error: 'Geen open punt.' };
+  if (isCodewordPoint(state, p)) return { error: 'Vul bij de finish het codewoord in.' };
   const r = progressOf(state, team.id).results[p.id];
   if (!r || !r.arrivedAt) return { error: 'Eerst inchecken bij het punt.' };
   if (p.type === 'foto') return { error: 'Maak een foto om dit punt af te ronden.' };
@@ -180,7 +241,7 @@ function answer(state, team, value) {
   r.lastAnswer = String(value).slice(0, 200);
   if (correct) {
     finishPoint(state, team, p, r, true);
-    return { ok: true, correct: true, letter: p.letter || '' };
+    return { ok: true, correct: true, letter: earnsLetter(p, r) ? p.letter : '', letterMissed: !!p.letter && !earnsLetter(p, r) };
   }
   if (r.tries >= MAX_TRIES) {
     finishPoint(state, team, p, r, false);
@@ -219,7 +280,7 @@ function submitPhoto(state, team, photoId) {
   r.answerPoints = 0;
   photo.max = r.pendingPoints;
   event(state, `📸 ${team.name} stuurde een foto bij ${p.name}`, team.id);
-  return { ok: true, letter: p.letter || '', photo };
+  return { ok: true, letter: '', photo };
 }
 
 // Het beheer kiest bij goedkeuren hoeveel punten, tot het maximum van het punt.
@@ -235,8 +296,10 @@ function judgePhoto(state, photoId, approve, points) {
     r.answerPoints = give;
     r.correct = approve;
   }
+  const pt = state.points.find(x => x.id === ph.pointId);
+  const letter = pt && r && earnsLetter(pt, r) ? pt.letter : '';
   if (approve) event(state, `✅ Foto van ${teamName(state, ph.teamId)} goedgekeurd: +${give} pt`, ph.teamId);
-  return { ok: true, teamId: ph.teamId, pointName: ph.pointName, approve, points: give, max };
+  return { ok: true, teamId: ph.teamId, pointName: ph.pointName, approve, points: give, max, letter };
 }
 
 // ---- verborgen schatten ----
@@ -399,12 +462,14 @@ function teamView(state, team) {
   const r = route(state, team);
   const p = currentPoint(state, team);
   const res = p ? pr.results[p.id] || {} : {};
-  const letters = r.filter(x => pr.results[x.id]?.correct && x.letter).map(x => x.letter);
+  const letters = r.filter(x => earnsLetter(x, pr.results[x.id])).map(x => x.letter);
   const done = r.filter(x => pr.results[x.id]?.done).map(x => ({ lat: x.lat, lng: x.lng, name: x.name }));
   const row = scoreboard(state).find(s => s.id === team.id);
   // Wat er maximaal te halen was op de punten die al gedaan zijn, en op de hele tocht
   const multi = state.teams.length > 1;
-  const maxFor = x => ARRIVE_POINTS[0] + (Number(x.points) || 100) + (multi && x.type !== 'checkin' ? FASTEST_BONUS : 0);
+  const maxFor = x => isCodewordPoint(state, x)
+    ? ARRIVE_POINTS[0] + codeword(state).length * CODE_LETTER + CODE_WHOLE
+    : ARRIVE_POINTS[0] + (Number(x.points) || 100) + (multi && x.type !== 'checkin' ? FASTEST_BONUS : 0);
   const possible = r.filter(x => pr.results[x.id]?.done).reduce((s, x) => s + maxFor(x), 0)
     + state.treasures.filter(t => (t.claims || {})[team.id]).reduce((s, t) => s + (Number(t.points) || 0), 0)
     + (pr.finishedAt ? FINISH_POINTS[0] : 0);
@@ -418,6 +483,10 @@ function teamView(state, team) {
     };
     const prev = [...r].reverse().find(x => pr.results[x.id]?.done);
     point.leg = prev ? legBetween(state, prev, p) : [[p.lat, p.lng]];
+    if (isCodewordPoint(state, p)) {
+      const { word, board } = codewordBoard(state, team);
+      point.codeword = { length: word.length, board, perLetter: CODE_LETTER, perGuess: CODE_GUESS, whole: CODE_WHOLE };
+    }
     if (res.arrivedAt) {
       Object.assign(point, { question: p.question || '', options: p.type === 'keuze' ? p.options || [] : null });
       if (res.hint) point.hint = p.hint;
@@ -509,6 +578,6 @@ function tvView(state) {
 
 module.exports = {
   id, seed, migrate, event, distance, inZone, route, currentPoint, progressOf,
-  checkin, answer, useHint, sendMist, submitPhoto, judgePhoto, claimTreasure, scatterTreasures, recordPos,
+  checkin, answer, solveCodeword, isCodewordPoint, useHint, sendMist, submitPhoto, judgePhoto, claimTreasure, scatterTreasures, recordPos,
   teamView, scoreboard, adminView, tvView,
 };

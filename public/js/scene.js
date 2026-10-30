@@ -81,7 +81,7 @@
 
   const t0 = performance.now();
   (function loop(now) {
-    const t = (now - t0) / 1000;
+    const t = Math.max(0, now - t0) / 1000; // de eerste frame kan net voor t0 vallen
     const a = t * 0.06;
     const r = camera.aspect < 1 ? 32 : 22;
     camera.position.set(Math.sin(a) * r + tx * 4, 14 - ty * 2, Math.cos(a) * r);

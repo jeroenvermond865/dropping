@@ -133,10 +133,12 @@ const App = (() => {
         <li><b>Hint</b>: kost ${hint} punten.</li>
         <li><b>Foto-opdracht</b>: punten komen pas als de organisatie de foto goedkeurt (soms meteen, soms na afloop).</li>
         <li><b>Verborgen schatten</b> 💎: binnen 100 m zie je een stukje kaart, binnen 25 m pak je hem. Eerste vinder krijgt alles.</li>
-        <li><b>Finish</b>: 100 punten extra voor het eerste team binnen (daarna 60 en 30).</li>
+        <li><b>Finish</b>: na het codewoord 100 punten extra voor het eerste team binnen (daarna 60 en 30).</li>
       </ul>
       <h3>🔤 Codewoord</h3>
-      <p>Bij veel goede antwoorden krijg je een letter. Bij de finish husselen jullie alle letters tot één woord.</p>
+      <p>Veel punten geven een letter, maar <b>alleen als je het in één keer goed hebt</b> (bij een foto: minstens de helft van de punten).
+        Bij de finish staat het woord klaar met jullie letters erin; de ontbrekende vul je zelf aan.
+        +20 per verdiende letter, +10 per zelf goed ingevulde letter, +50 als het hele woord klopt.</p>
       <p class="muted">🏆 Het scorebord zie je pas bij de finish. Spannend!</p>
     </div>`;
   }

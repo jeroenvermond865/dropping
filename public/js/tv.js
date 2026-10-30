@@ -217,6 +217,12 @@
     } else if (ev.kind === 'fotoBeoordeeld') {
       body = `<div class="lp-kind">📸 Foto bij ${esc(p.name)}</div><img src="/foto/${esc(ev.photoId)}">
         ${ev.approve ? `<div class="lp-good">✅ Goedgekeurd: +${ev.points} van ${ev.max} punten</div>` : '<div class="lp-bad">❌ Afgekeurd</div>'}`;
+    } else if (ev.kind === 'codewoord') {
+      body = `<div class="lp-kind">🏁 Bij de finish: het codewoord</div>
+        <div class="code-row" style="justify-content:flex-start">${[...ev.word].map((c, i) => `<div class="code-slot ${ev.board[i] ? 'got' : ''}" style="display:grid;place-items:center;${!ev.board[i] ? `border:2px solid ${ev.guess[i] === c ? 'var(--good)' : 'var(--bad)'}` : ''}">${esc(ev.board[i] || ev.guess[i].trim() || '?')}</div>`).join('')}</div>
+        <div class="lp-q">${ev.whole ? '🎉 Geraden: ' : 'Het woord was: '}${esc(ev.word)}</div>
+        <div class="lp-good">+${ev.points} punten</div>
+        <div class="lp-meta">Letters ${ev.parts.letters} · zelf ingevuld ${ev.parts.guessed}${ev.whole ? ' · hele woord ' + ev.parts.whole : ''}</div>`;
     } else if (ev.kind === 'schat') {
       body = `<div class="lp-q">💎 Schat gevonden${ev.first ? ' als eerste' : ''}!</div><div class="lp-good">+${ev.points} punten</div>`;
     } else return;

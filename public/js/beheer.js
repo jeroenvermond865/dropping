@@ -778,13 +778,14 @@
       <label style="display:flex;gap:8px;color:var(--text)"><input type="checkbox" id="s_map" ${s.showMap ? 'checked' : ''}> Kaart tonen aan spelers (uit = alleen kompaspijl en afstand)</label>
       <label style="display:flex;gap:8px;color:var(--text)"><input type="checkbox" id="s_finish" ${s.lastIsFinish ? 'checked' : ''}> Laatste punt is voor iedereen de finish</label>
       <div><label>Schatten zichtbaar vanaf (m)</label><input id="s_reveal" type="number" value="${s.treasureReveal}"></div>
+      <div><label>Codewoord (bij de finish in te vullen; leeg = eerste antwoord van de finishvraag)</label><input id="s_code" value="${esc(s.codeword || '')}" placeholder="VLEERMUIS"></div>
       <a class="btn ghost" href="/tv?d=${esc(state.dropping.id)}" target="_blank">📺 Tv-scherm openen</a>
       <button class="btn" id="s_save">Opslaan</button>
       <hr style="border:0;border-top:1px solid var(--line);width:100%">
       <button class="btn danger" id="s_reset">🔄 Spel resetten: alle voortgang en scores wissen</button>
     </div>`;
     $('s_save').onclick = async () => {
-      await api('/api/admin/settings', { title: $('s_title').value, radius: Number($('s_radius').value), hintCost: Number($('s_hint').value), testMode: $('s_test').checked, showMap: $('s_map').checked, lastIsFinish: $('s_finish').checked, treasureReveal: Number($('s_reveal').value) });
+      await api('/api/admin/settings', { title: $('s_title').value, radius: Number($('s_radius').value), hintCost: Number($('s_hint').value), testMode: $('s_test').checked, showMap: $('s_map').checked, lastIsFinish: $('s_finish').checked, treasureReveal: Number($('s_reveal').value), codeword: $('s_code').value });
       App.toast('Instellingen opgeslagen', 'good');
     };
     $('s_reset').onclick = resetAll;

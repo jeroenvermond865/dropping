@@ -154,13 +154,13 @@ app.post('/api/clientlog', (req, res) => {
 
 app.get('/api/me', teamAuth, (req, res) => res.json(game.teamView(req.d, req.team)));
 
-function teamAction(fn) {
+function teamAction(fn, finishDelay = 0) {
   return [teamAuth, (req, res) => {
     const wasDone = !!game.progressOf(req.d, req.team.id).finishedAt;
     const out = fn(req);
     if (out.error) return res.status(400).json(out);
     changed(req.d);
-    finishCheck(req.d, req.team, wasDone);
+    setTimeout(() => finishCheck(req.d, req.team, wasDone), finishDelay);
     res.json(out);
   }];
 }
@@ -196,6 +196,12 @@ app.post('/api/answer', ...teamAction(req => {
   }
   return out;
 }));
+// Codewoord bij de finish; het scorebord komt pas na 15 seconden op de tv
+app.post('/api/codeword', ...teamAction(req => {
+  const out = game.solveCodeword(req.d, req.team, clean(req.body.guess, 40));
+  if (out.ok) tvLive(req.d, req.team, { kind: 'codewoord', word: out.word, board: out.board, guess: out.guess, whole: out.whole, points: out.points, parts: out.parts });
+  return out;
+}, 15000));
 app.post('/api/hint', ...teamAction(req => game.useHint(req.d, req.team)));
 app.post('/api/mist', ...teamAction(req => {
   const out = game.sendMist(req.d, req.team, req.body.teamId);
@@ -504,6 +510,7 @@ app.post('/api/admin/settings', adminAuth, (req, res) => {
   if (b.treasureReveal !== undefined) s.treasureReveal = Math.min(Math.max(num(b.treasureReveal, 100), 20), 1000);
   if (b.showPath !== undefined) s.showPath = !!b.showPath;
   if (b.showMap !== undefined) s.showMap = !!b.showMap;
+  if (b.codeword !== undefined) s.codeword = clean(b.codeword, 30).toUpperCase().replace(/[^A-Z]/g, '');
   changed(req.d);
   res.json(s);
 });

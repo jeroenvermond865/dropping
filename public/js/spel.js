@@ -40,7 +40,7 @@
   socket.on('view', v => render(v));
   socket.on('photoJudged', r => {
     if (r.approve) { App.confetti(); App.buzz([50, 50, 50, 50, 200]); }
-    choose(r.approve ? `📸 Foto goedgekeurd! Jullie krijgen ${r.points} van de ${r.max} punten voor "${r.pointName}".` : `📸 De foto bij "${r.pointName}" is helaas afgekeurd. Geen punten.`, [{ label: r.approve ? '🎉 Top!' : 'Jammer', value: 1 }]);
+    choose(r.approve ? `📸 Foto goedgekeurd! Jullie krijgen ${r.points} van de ${r.max} punten voor "${r.pointName}".${r.letter ? ` En de letter ${r.letter}!` : ''}` : `📸 De foto bij "${r.pointName}" is helaas afgekeurd. Geen punten.`, [{ label: r.approve ? '🎉 Top!' : 'Jammer', value: 1 }]);
   });
   socket.on('mist', ({ from }) => { App.toast(`🌫️ ${from} stuurt mist! Even geen kaart…`, 'bad'); App.buzz([100, 50, 100]); });
 
@@ -297,6 +297,7 @@
       $('checkinBtn').onclick = checkin;
       return;
     }
+    if (p.codeword) return renderCodeword(s, v, p.codeword);
     const triesLeft = v.maxTries - v.tries;
     const penalty = p.type === 'keuze' || p.type === 'vraag' ? ` · −${v.wrongPenalty} per fout antwoord` : '';
     let body = `<div><div class="muted" style="font-size:.85em">${App.esc(p.name)} · te verdienen: ${p.points} pt${penalty}</div>
@@ -334,6 +335,33 @@
     };
   }
 
+  // Finish: het codewoord met de verdiende letters al ingevuld; de rest zelf aanvullen
+  function renderCodeword(s, v, cw) {
+    const got = cw.board.filter(Boolean).length;
+    s.innerHTML = `<div><div class="muted" style="font-size:.85em">🏁 Finish · laatste opdracht</div><h2>🔤 Het codewoord</h2></div>
+      <p style="margin:0">De <b style="color:var(--good)">groene letters</b> hebben jullie onderweg verdiend: ${got} van de ${cw.length} (+${cw.perLetter} per letter).
+        Vul de lege vakjes aan: +${cw.perGuess} per goede letter en +${cw.whole} als het hele woord klopt. <b>Je hebt één poging!</b></p>
+      <div class="code-row">${cw.board.map((c, i) => c
+        ? `<div class="code-slot got">${App.esc(c)}</div>`
+        : `<input class="code-slot" data-i="${i}" maxlength="1" autocomplete="off" autocapitalize="characters" spellcheck="false">`).join('')}</div>
+      <button class="btn block" id="codeBtn">🔤 Codewoord insturen</button>${scoreHtml(v)}`;
+    const inputs = [...s.querySelectorAll('input.code-slot')];
+    inputs.forEach((inp, k) => {
+      inp.oninput = () => { inp.value = inp.value.toUpperCase().replace(/[^A-Z]/g, ''); if (inp.value && inputs[k + 1]) inputs[k + 1].focus(); };
+      inp.onkeydown = e => { if (e.key === 'Backspace' && !inp.value && inputs[k - 1]) inputs[k - 1].focus(); };
+    });
+    $('codeBtn').onclick = async () => {
+      const guess = cw.board.map((c, i) => c || (s.querySelector(`input[data-i="${i}"]`).value || ' ')).join('');
+      if (inputs.some(i => !i.value) && await choose('Nog niet alle vakjes zijn ingevuld. Toch insturen?', [{ label: 'Ja, insturen', value: 1 }]) !== 1) return;
+      $('codeBtn').disabled = true;
+      try {
+        const r = await App.api('/api/codeword', { guess });
+        if (r.whole) { App.confetti(); App.buzz([50, 50, 50, 50, 300]); }
+        await choose(`${r.whole ? '🎉 Goed geraden' : '🔤 Het woord was'}: ${r.word}! Verdiende letters ${r.parts.letters} + zelf ingevuld ${r.parts.guessed}${r.whole ? ' + hele woord ' + r.parts.whole : ''} = ${r.points} punten.`, [{ label: '🏆 Op naar het scorebord!', value: 1 }]);
+      } catch (e) { App.toast(e.message, 'bad'); $('codeBtn').disabled = false; }
+    };
+  }
+
   async function checkin() {
     $('checkinBtn').disabled = true;
     try {
@@ -347,7 +375,7 @@
   async function send(answer) {
     try {
       const r = await App.api('/api/answer', { answer });
-      if (r.correct) { App.confetti(); App.buzz([50, 50, 50, 50, 200]); App.toast(r.letter ? `✅ Goed! Je krijgt de letter ${r.letter}` : '✅ Goed zo!', 'good'); }
+      if (r.correct) { App.confetti(); App.buzz([50, 50, 50, 50, 200]); App.toast(r.letter ? `✅ Goed! Je krijgt de letter ${r.letter}` : r.letterMissed ? '✅ Goed! Maar geen letter: die krijg je alleen als het in één keer goed is.' : '✅ Goed zo!', 'good'); }
       else if (r.out) App.toast('❌ Helaas, door naar het volgende punt.', 'bad');
       else { App.toast(`❌ Fout (−${view.wrongPenalty} punten), nog ${r.triesLeft} ${r.triesLeft === 1 ? 'poging' : 'pogingen'}`, 'bad'); App.buzz(300); }
     } catch (e) { App.toast(e.message, 'bad'); }
@@ -372,7 +400,7 @@
       const data = c.toDataURL('image/jpeg', 0.78);
       const r = await App.api('/api/photo', { data });
       App.confetti(); App.buzz([50, 50, 200]);
-      App.toast(r.letter ? `📸 Foto verstuurd! Letter ${r.letter}. Punten volgen na goedkeuring.` : '📸 Foto verstuurd! Punten volgen na goedkeuring.', 'good');
+      App.toast('📸 Foto verstuurd! Punten (en eventueel een letter) volgen na goedkeuring.', 'good');
     } catch (e) {
       App.toast(e.message, 'bad');
       document.querySelectorAll('.photo-lbl').forEach((l, i) => { l.firstChild.textContent = labels[i]; });

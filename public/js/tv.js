@@ -140,22 +140,25 @@
     const b = overviewBounds();
     if (b) map.flyToBounds(b, { ...safePad(), duration });
   }
-  // Inzoomen op één team, maar nooit zo ver dat de andere teams uit beeld raken
+  // Dicht inzoomen op één team; in het overzicht daarna komt iedereen weer in beeld
   function focusTeam(t, zoom, duration) {
-    const c = L.latLng(t.pos.lat, t.pos.lng);
-    const others = liveTeams().filter(x => x.id !== t.id).map(x => L.latLng(x.pos.lat, x.pos.lng));
-    if (others.length) {
-      // spiegelen rond het team, zodat het team in het midden blijft
-      const pts = [c, ...others, ...others.map(o => L.latLng(2 * c.lat - o.lat, 2 * c.lng - o.lng))];
-      const s = map.getSize();
-      zoom = Math.min(zoom, map.getBoundsZoom(L.latLngBounds(pts), false, L.point(s.x * (popOpen ? 0.8 : 0.66), s.y * 0.72)));
-    }
-    map.flyTo(focusCenter(c, zoom), zoom, { duration });
+    map.flyTo(focusCenter(L.latLng(t.pos.lat, t.pos.lng), zoom), zoom, { duration });
+  }
+
+  // Doet een team iets (opdracht, antwoord, foto, schat), dan extra inzoomen zolang de pop-up staat
+  function actionShot(teamId) {
+    const t = liveTeams().find(x => x.id === teamId);
+    if (!t || replay) return;
+    clearTimeout(zoomOutTimer);
+    cam = { type: 'actie', id: t.id, zoom: 18.3, until: Date.now() + 45000 };
+    $('camLabel').textContent = '🎬 ' + t.name + ' is bezig!';
+    focusTeam(t, 18.3, 2.5);
   }
 
   let shot = 0;
   function nextShot() {
     if (!data || !map) return;
+    if (cam.type === 'actie' && Date.now() < cam.until && !replay) return;
     clearTimeout(zoomOutTimer);
     if (replay) { cam = { type: 'overzicht' }; return overview(3); }
     const live = liveTeams();
@@ -167,11 +170,11 @@
       $('camLabel').textContent = '🎥 Overzicht';
       return overview(4);
     }
-    cam = { type: 'team', id: t.id, zoom: 17 };
+    cam = { type: 'team', id: t.id, zoom: 17.7 };
     $('camLabel').textContent = '🎥 ' + t.name;
-    focusTeam(t, 17, 4);
-    // halverwege rustig een stukje uitzoomen, nog steeds op het team
-    zoomOutTimer = setTimeout(() => { if (!replay && t.pos) { cam.zoom = 15.5; focusTeam(t, 15.5, 5); } }, 7000);
+    focusTeam(t, 17.7, 4);
+    // halverwege rustig een stukje uitzoomen, nog steeds dicht op het team
+    zoomOutTimer = setTimeout(() => { if (!replay && t.pos && cam.type === 'team') { cam.zoom = 16.7; focusTeam(t, 16.7, 5); } }, 7000);
   }
   setInterval(nextShot, 14000);
   setTimeout(nextShot, 3000);
@@ -179,9 +182,9 @@
   // Bewaker: loopt een team uit beeld, dan stuurt de camera meteen bij
   setInterval(() => {
     if (!data || !map || flying) return;
-    if (cam.type === 'team') {
+    if (cam.type === 'team' || cam.type === 'actie') {
       const t = liveTeams().find(x => x.id === cam.id);
-      if (t && liveTeams().some(x => !inView([x.pos.lat, x.pos.lng]))) focusTeam(t, cam.zoom || map.getZoom(), 1.5);
+      if (t && !inView([t.pos.lat, t.pos.lng])) focusTeam(t, cam.zoom || map.getZoom(), 1.5);
     } else if (liveTeams().some(t => !inView([t.pos.lat, t.pos.lng]))) overview(2);
   }, 2000);
 
@@ -218,8 +221,9 @@
     el.innerHTML = head + body;
     el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
     popOpen = true;
+    actionShot(ev.team.id);
     clearTimeout(liveTimer);
-    liveTimer = setTimeout(() => { el.classList.remove('show'); popOpen = false; }, 45000);
+    liveTimer = setTimeout(() => { el.classList.remove('show'); popOpen = false; nextShot(); }, 45000);
   }
 
   const prevRank = {};

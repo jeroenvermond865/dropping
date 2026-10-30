@@ -29,6 +29,7 @@
     socket.on('pos', ({ teamId, lat, lng, ts }) => {
       const pr = state.progress[teamId] || (state.progress[teamId] = { results: {} });
       pr.pos = { lat, lng, ts };
+      (pr.trail = pr.trail || []).push([lat, lng, ts]);
       drawTeams();
     });
     draw();
@@ -168,8 +169,11 @@
   function drawTeams() {
     layers.teams.clearLayers();
     for (const t of state.teams) {
-      const pos = state.progress[t.id]?.pos;
+      const pr = state.progress[t.id];
+      const pos = pr?.pos;
       if (!pos) continue;
+      // Gelopen spoor, zodat je ziet waar het team langs is gekomen
+      if (pr.trail?.length > 1) L.polyline(pr.trail.map(c => [c[0], c[1]]), { color: t.color, weight: 3, opacity: 0.7 }).addTo(layers.teams);
       const ago = Math.round((Date.now() - pos.ts) / 60000);
       L.marker([pos.lat, pos.lng], {
         icon: L.divIcon({ className: '', html: `<div class="team-marker" style="background:${esc(t.color)}"></div>`, iconSize: [22, 22], iconAnchor: [11, 11] }),

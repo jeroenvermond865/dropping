@@ -40,7 +40,7 @@
       meMarker.setLatLng(me).addTo(map);
       meCircle.setLatLng(me).setRadius(me.acc).addTo(map);
       $('gpsInfo').textContent = `GPS ±${Math.round(me.acc)} m` + (heading == null ? ' · tik de pijl voor kompas' : '');
-      if (Date.now() - lastSentPos > 10000) {
+      if (Date.now() - lastSentPos > 5000) {
         lastSentPos = Date.now();
         App.api('/api/pos', me).catch(() => {});
       }

@@ -142,6 +142,14 @@ app.post('/api/admin/login', (req, res) => {
   res.json({ token: newToken({ type: 'admin' }) });
 });
 
+// Foutmeldingen van telefoons, alleen naar het logboek
+let clientLogs = 0;
+setInterval(() => { clientLogs = 0; }, 60000);
+app.post('/api/clientlog', (req, res) => {
+  if (clientLogs++ < 60) console.log('[telefoon]', clean(req.body.msg, 300), '|', clean(req.body.ua, 160));
+  res.json({ ok: true });
+});
+
 // ---- team ----
 
 app.get('/api/me', teamAuth, (req, res) => res.json(game.teamView(req.d, req.team)));

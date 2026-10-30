@@ -5,6 +5,15 @@
   const ARROW = '<svg viewBox="0 0 100 100"><path d="M50 4 L78 86 L50 70 L22 86 Z" fill="#4dd2ff" stroke="#fff" stroke-width="3" stroke-linejoin="round"/><path d="M50 4 L50 70 L22 86 Z" fill="#b06bff" opacity=".85"/></svg>';
   document.querySelectorAll('[data-arrow]').forEach(a => { a.innerHTML = ARROW; });
 
+  // Fouten op de telefoon naar het serverlogboek, zodat ze te onderzoeken zijn
+  let reported = 0;
+  function reportError(msg) {
+    if (reported++ > 20) return;
+    fetch('/api/clientlog', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ msg: String(msg).slice(0, 300), ua: navigator.userAgent }) }).catch(() => {});
+  }
+  addEventListener('error', e => reportError('fout: ' + e.message + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno));
+  addEventListener('unhandledrejection', e => reportError('promise: ' + (e.reason && e.reason.message || e.reason)));
+
   let view = null, me = null, heading = null, lastPointId = null, lastSentPos = 0, mistTimer = null;
 
   // ---- kaart ----
@@ -41,25 +50,43 @@
   });
 
   // ---- gps ----
-  if ('geolocation' in navigator) {
-    navigator.geolocation.watchPosition(p => {
-      me = { lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy };
-      if (p.coords.heading != null && !isNaN(p.coords.heading) && p.coords.speed > 0.8 && heading == null) gpsHeading = p.coords.heading;
+  let gpsHeading = null, watchId = null, gpsTimer = null;
+  const gpsText = (t, bad) => ['gpsInfo', 'gpsInfo2'].forEach(id => { const el = $(id); if (el) { el.textContent = t; el.style.color = bad ? 'var(--bad)' : ''; } });
+  function sendPos() {
+    if (!me) return;
+    lastSentPos = Date.now();
+    App.api('/api/pos', me).catch(() => {});
+  }
+  function onGps(p) {
+    me = { lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy };
+    // Eerst versturen, zodat het beheer het team ook ziet als er hieronder iets misgaat
+    if (Date.now() - lastSentPos > 5000) sendPos();
+    if (p.coords.heading != null && !isNaN(p.coords.heading) && p.coords.speed > 0.8 && heading == null) gpsHeading = p.coords.heading;
+    gpsText(`📡 GPS werkt · ±${Math.round(me.acc)} m`);
+    try {
       meMarker.setLatLng(me).addTo(map);
       meCircle.setLatLng(me).setRadius(me.acc).addTo(map);
-      $('gpsInfo').textContent = $('gpsInfo2').textContent = `GPS ±${Math.round(me.acc)} m`;
-      if (Date.now() - lastSentPos > 5000) {
-        lastSentPos = Date.now();
-        App.api('/api/pos', me).catch(() => {});
-      }
       updateNav();
-    }, err => {
-      $('gpsInfo').textContent = $('gpsInfo2').textContent = err.code === 1 ? 'Geef de site toegang tot je locatie!' : 'Geen GPS-signaal';
-    }, { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 });
-  } else {
-    $('gpsInfo').textContent = 'Deze telefoon heeft geen GPS in de browser';
+    } catch (e) { reportError('gps-weergave: ' + e.message); }
   }
-  let gpsHeading = null;
+  function onGpsError(err) {
+    reportError('gps-fout ' + err.code + ': ' + err.message);
+    if (err.code === 1) return gpsText('📡 Geen toegang tot je locatie. Zet op de iPhone aan: Instellingen › Privacy › Locatievoorzieningen › Chrome/Safari › "Bij gebruik van app", en sta de site toe. Herlaad daarna.', true);
+    gpsText('📡 GPS zoekt signaal…', true);
+    // Sommige telefoons stoppen na een time-out; dan opnieuw beginnen
+    clearTimeout(gpsTimer);
+    gpsTimer = setTimeout(startGps, 3000);
+  }
+  function startGps() {
+    if (!('geolocation' in navigator)) return gpsText('Deze telefoon heeft geen GPS in de browser', true);
+    if (watchId != null) navigator.geolocation.clearWatch(watchId);
+    gpsText('📡 GPS zoeken…');
+    watchId = navigator.geolocation.watchPosition(onGps, onGpsError, { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 });
+  }
+  startGps();
+  // Ook stilstaand blijft het team zichtbaar in het beheer
+  setInterval(() => { if (me && Date.now() - lastSentPos > 10000) sendPos(); }, 5000);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') startGps(); });
 
   // ---- kompas ----
   function onOrient(e) {
@@ -191,7 +218,7 @@
     layerControl.getContainer().style.display = showMap ? '' : 'none';
     const compassOnly = v.point && (!showMap || (v.point.kompas && !v.arrived));
     $('navCard').style.display = v.point && !compassOnly ? '' : 'none';
-    $('compassLabel').textContent = v.point && v.point.kompas ? '🧭 Alleen op het kompas!' : v.point ? `Punt ${v.index + 1} van ${v.total}: ${v.point.name}` : '';
+    $('compassLabel').textContent = v.point ? `Punt ${v.index + 1} van ${v.total}: ${v.point.name}` : '';
 
     // mist van een ander team
     clearTimeout(mistTimer);

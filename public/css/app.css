@@ -215,3 +215,10 @@ input[type=color] { padding: 2px; height: 42px; }
 .modal .card { width: 100%; max-width: 460px; }
 .modal h3 { margin: 0; }
 #compassBtn { pointer-events: auto; }
+
+/* Zonder kaart: donkere achtergrond met alleen de lijn naar het volgende punt */
+.game.nomap #map { background: radial-gradient(circle at 50% 45%, #1b2a5c, #050812 70%); }
+.game.nomap .compass-only { background: none; pointer-events: none; gap: 10px; }
+.game.nomap .compass-only .compass { width: 30vmin; height: 30vmin; max-width: 150px; max-height: 150px; }
+.game.nomap .compass-only .dist { font-size: 2.4rem; }
+.game.nomap .leaflet-control-attribution { display: none; }

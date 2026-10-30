@@ -11,11 +11,13 @@
   const map = L.map('map', { zoomControl: false, attributionControl: true }).setView([52.06, 5.66], 14);
   const layers = App.tileLayers();
   layers['Nacht'].addTo(map);
-  L.control.layers(layers, null, { position: 'bottomright' }).addTo(map);
+  const layerControl = L.control.layers(layers, null, { position: 'bottomright' }).addTo(map);
   const zoneLayer = L.layerGroup().addTo(map);
   const treasureLayer = L.layerGroup().addTo(map);
   let knownTreasures = null;
   const trailLayer = L.layerGroup().addTo(map);
+  const legLayer = L.layerGroup().addTo(map);
+  const tileLayer = layers['Nacht'];
   const targetMarker = L.marker([0, 0], { icon: L.divIcon({ className: '', html: '<div class="target-marker"></div>', iconSize: [26, 26], iconAnchor: [13, 13] }) });
   const targetCircle = L.circle([0, 0], { radius: 30, color: '#4dd2ff', weight: 1, fillOpacity: 0.08 });
   const meMarker = L.marker([0, 0], { icon: L.divIcon({ className: '', html: '<div class="me-marker"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }), zIndexOffset: 1000 });
@@ -92,8 +94,21 @@
     document.querySelectorAll('[data-arrow]').forEach(a => { a.style.transform = `rotate(${b - h}deg)`; });
   }
 
+  // Kaartbeeld passend maken; zonder kaart blijft er boven ruimte voor het kompas en onder voor de vraag.
+  let lastFit = 0;
+  function fitView() {
+    if (!view || !view.point) return;
+    lastFit = Date.now();
+    const pts = [...(view.point.leg || []), [view.point.lat, view.point.lng], ...(me ? [[me.lat, me.lng]] : [])];
+    const nomap = !view.settings.showMap;
+    const top = nomap ? Math.max(...[...$('compassOnly').children].map(c => c.getBoundingClientRect().bottom)) + 10 : 60;
+    const bottom = nomap ? innerHeight - $('sheet').getBoundingClientRect().top + 10 : 60;
+    map.fitBounds(L.latLngBounds(pts), { paddingTopLeft: [30, Math.max(60, top)], paddingBottomRight: [30, Math.max(60, bottom)], maxZoom: 17, animate: false });
+  }
+
   function updateNav() {
     if (!view) return;
+    if (Date.now() - lastFit > 15000) fitView();
     const p = view.point;
     let d = null;
     if (p && me) d = App.distance(me, p);
@@ -142,7 +157,10 @@
     $('pointNr').textContent = v.point ? `Punt ${v.index + 1} van ${v.total}` : 'Klaar!';
     // Zonder kaart (standaard) altijd het grote kompas; met kaart alleen bij kompaspunten
     const showMap = v.settings.showMap;
-    $('map').style.visibility = showMap ? '' : 'hidden';
+    // Zonder kaart: geen straten, alleen het stukje route naar het volgende punt
+    document.querySelector('.game').classList.toggle('nomap', !showMap);
+    if (showMap) tileLayer.addTo(map); else tileLayer.remove();
+    layerControl.getContainer().style.display = showMap ? '' : 'none';
     const compassOnly = v.point && (!showMap || (v.point.kompas && !v.arrived));
     $('navCard').style.display = v.point && !compassOnly ? '' : 'none';
     $('compassLabel').textContent = v.point && v.point.kompas ? '🧭 Alleen op het kompas!' : v.point ? `Punt ${v.index + 1} van ${v.total}: ${v.point.name}` : '';
@@ -161,13 +179,16 @@
     trailLayer.clearLayers();
     v.done.forEach((p, i) => L.circleMarker(p, { radius: 6, color: '#3ee08f', fillOpacity: 0.9 }).bindTooltip(`${i + 1}. ${App.esc(p.name)}`).addTo(trailLayer));
     if (v.done.length > 1) L.polyline(v.done, { color: '#3ee08f', weight: 2, opacity: 0.6, dashArray: '2 8' }).addTo(trailLayer);
+    legLayer.clearLayers();
+    if (v.point && v.point.leg && v.point.leg.length > 1) {
+      L.polyline(v.point.leg, { color: '#4dd2ff', weight: 14, opacity: 0.15 }).addTo(legLayer);
+      L.polyline(v.point.leg, { color: '#4dd2ff', weight: 5, opacity: 0.95, dashArray: '10 10' }).addTo(legLayer);
+    }
+    if (!showMap) { zoneLayer.clearLayers(); trailLayer.clearLayers(); }
     if (v.point) {
       targetMarker.setLatLng(v.point).addTo(map);
       targetCircle.setLatLng(v.point).setRadius(v.point.radius).addTo(map);
-      if (!fitted || prevId !== v.point.id) {
-        fitted = true;
-        map.fitBounds(L.latLngBounds([v.point, me || v.point]).pad(0.4), { maxZoom: 17, animate: false });
-      }
+      if (!fitted || prevId !== v.point.id) { fitted = true; lastFit = 0; }
     } else { targetMarker.remove(); targetCircle.remove(); }
     $('compassOnly').style.display = compassOnly ? 'flex' : 'none';
     $('compassBtn').style.display = heading == null ? '' : 'none';
@@ -187,6 +208,7 @@
     knownTreasures = ids;
 
     renderSheet(v);
+    if (!lastFit) fitView();
     updateNav();
     if (prevId && v.point && prevId !== v.point.id) showReveal(v.point);
   }

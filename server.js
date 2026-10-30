@@ -169,15 +169,29 @@ app.post('/api/mist', ...teamAction(req => {
   return out.ok ? { ok: true } : out;
 }));
 
+// Meerdere telefoons in één team: van hun recente posities wordt één gemiddelde gemaakt,
+// zodat het team als één punt op de kaart staat.
+const devicePos = {}; // teamId -> { token: { lat, lng, acc, ts } }
+
+function teamPos(teamId, token, pos) {
+  const devs = devicePos[teamId] || (devicePos[teamId] = {});
+  devs[token] = { ...pos, ts: Date.now() };
+  for (const [k, p] of Object.entries(devs)) if (Date.now() - p.ts > 30000) delete devs[k];
+  const recent = Object.values(devs);
+  const avg = k => recent.reduce((s, p) => s + p[k], 0) / recent.length;
+  return { lat: avg('lat'), lng: avg('lng'), acc: Math.min(...recent.map(p => p.acc)) };
+}
+
 app.post('/api/pos', teamAuth, (req, res) => {
   const lat = num(req.body.lat, null), lng = num(req.body.lng, null);
   if (lat === null || lng === null) return res.status(400).json({ error: 'Ongeldige positie.' });
-  const newTreasure = game.recordPos(req.d, req.team, { lat, lng, acc: num(req.body.acc, 0) });
+  const pos = teamPos(req.team.id, req.headers.authorization || '', { lat, lng, acc: num(req.body.acc, 0) });
+  const newTreasure = game.recordPos(req.d, req.team, pos);
   if (newTreasure) changed(req.d);
   else {
     store.save(db);
-    io.to('admin:' + req.d.id).emit('pos', { teamId: req.team.id, lat, lng, ts: Date.now() });
-    io.to('tv:' + req.d.id).emit('pos', { teamId: req.team.id, lat, lng, ts: Date.now() });
+    io.to('admin:' + req.d.id).emit('pos', { teamId: req.team.id, lat: pos.lat, lng: pos.lng, ts: Date.now() });
+    io.to('tv:' + req.d.id).emit('pos', { teamId: req.team.id, lat: pos.lat, lng: pos.lng, ts: Date.now() });
   }
   res.json({ ok: true });
 });

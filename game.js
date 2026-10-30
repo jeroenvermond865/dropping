@@ -332,6 +332,60 @@ function sendMist(state, team, targetId) {
   return { ok: true, target };
 }
 
+// ---- stukje route tot het volgende punt ----
+
+// Plek van p langs de lijn: afstand vanaf het begin (m) en hoe ver p van de lijn ligt.
+function along(line, p) {
+  const k = Math.cos(p.lat * Math.PI / 180);
+  let best = { at: 0, off: Infinity }, cum = 0;
+  for (let i = 1; i < line.length; i++) {
+    const a = { lat: line[i - 1][0], lng: line[i - 1][1] }, b = { lat: line[i][0], lng: line[i][1] };
+    const len = distance(a, b);
+    const dx = (b.lng - a.lng) * k, dy = b.lat - a.lat;
+    const t = dx || dy ? Math.min(1, Math.max(0, (((p.lng - a.lng) * k) * dx + (p.lat - a.lat) * dy) / (dx * dx + dy * dy))) : 0;
+    const q = { lat: a.lat + (b.lat - a.lat) * t, lng: a.lng + (b.lng - a.lng) * t };
+    const off = distance(p, q);
+    if (off < best.off) best = { at: cum + len * t, off };
+    cum += len;
+  }
+  return best;
+}
+
+function pointAt(line, at) {
+  let cum = 0;
+  for (let i = 1; i < line.length; i++) {
+    const a = { lat: line[i - 1][0], lng: line[i - 1][1] }, b = { lat: line[i][0], lng: line[i][1] };
+    const len = distance(a, b);
+    if (cum + len >= at) {
+      const t = len ? (at - cum) / len : 0;
+      return [a.lat + (b.lat - a.lat) * t, a.lng + (b.lng - a.lng) * t];
+    }
+    cum += len;
+  }
+  return line[line.length - 1];
+}
+
+// Het deel van de getekende route tussen twee punten, in looprichting.
+function legBetween(state, from, to) {
+  let best = null;
+  for (const p of state.paths) {
+    if (!p.line || p.line.length < 2) continue;
+    const a = along(p.line, from), b = along(p.line, to);
+    if (!best || a.off + b.off < best.off) best = { line: p.line, a: a.at, b: b.at, off: a.off + b.off };
+  }
+  if (!best || best.off > 600) return [[from.lat, from.lng], [to.lat, to.lng]];
+  const lo = Math.min(best.a, best.b), hi = Math.max(best.a, best.b);
+  const out = [pointAt(best.line, lo)];
+  let cum = 0;
+  for (let i = 1; i < best.line.length; i++) {
+    cum += distance({ lat: best.line[i - 1][0], lng: best.line[i - 1][1] }, { lat: best.line[i][0], lng: best.line[i][1] });
+    if (cum > lo && cum < hi) out.push(best.line[i]);
+  }
+  out.push(pointAt(best.line, hi));
+  if (best.a > best.b) out.reverse();
+  return [[from.lat, from.lng], ...out, [to.lat, to.lng]];
+}
+
 // ---- weergaven ----
 
 function teamView(state, team) {
@@ -356,6 +410,8 @@ function teamView(state, team) {
       radius: p.radius || state.settings.radius, intro: p.intro || '', kompas: !!p.kompas,
       hasHint: !!p.hint, points: Number(p.points) || 100,
     };
+    const prev = [...r].reverse().find(x => pr.results[x.id]?.done);
+    point.leg = prev ? legBetween(state, prev, p) : [[p.lat, p.lng]];
     if (res.arrivedAt) {
       Object.assign(point, { question: p.question || '', options: p.type === 'keuze' ? p.options || [] : null });
       if (res.hint) point.hint = p.hint;

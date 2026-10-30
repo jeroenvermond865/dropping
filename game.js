@@ -210,27 +210,33 @@ function submitPhoto(state, team, photoId) {
   if (!p || p.type !== 'foto') return { error: 'Hier hoort geen foto bij.' };
   const r = progressOf(state, team.id).results[p.id];
   if (!r || !r.arrivedAt) return { error: 'Eerst inchecken bij het punt.' };
-  state.photos.unshift({ id: photoId, teamId: team.id, pointId: p.id, pointName: p.name, ts: Date.now(), status: 'wacht' });
+  const photo = { id: photoId, teamId: team.id, pointId: p.id, pointName: p.name, ts: Date.now(), status: 'wacht' };
+  state.photos.unshift(photo);
   r.tries = 1;
   r.photoId = photoId;
   finishPoint(state, team, p, r, true);
   r.pendingPoints = r.answerPoints;
   r.answerPoints = 0;
+  photo.max = r.pendingPoints;
   event(state, `📸 ${team.name} stuurde een foto bij ${p.name}`, team.id);
-  return { ok: true, letter: p.letter || '' };
+  return { ok: true, letter: p.letter || '', photo };
 }
 
-function judgePhoto(state, photoId, approve) {
+// Het beheer kiest bij goedkeuren hoeveel punten, tot het maximum van het punt.
+function judgePhoto(state, photoId, approve, points) {
   const ph = state.photos.find(x => x.id === photoId);
   if (!ph) return { error: 'Foto niet gevonden.' };
-  ph.status = approve ? 'goed' : 'afgekeurd';
   const r = state.progress[ph.teamId]?.results[ph.pointId];
+  const max = ph.max ?? r?.pendingPoints ?? 0;
+  const give = approve ? Math.min(Math.max(Math.round(Number.isFinite(points) ? points : max), 0), max) : 0;
+  ph.status = approve ? 'goed' : 'afgekeurd';
+  ph.points = give;
   if (r && r.photoId === photoId) {
-    r.answerPoints = approve ? (r.pendingPoints || 0) : 0;
+    r.answerPoints = give;
     r.correct = approve;
   }
-  if (approve) event(state, `✅ Foto van ${teamName(state, ph.teamId)} goedgekeurd`, ph.teamId);
-  return { ok: true };
+  if (approve) event(state, `✅ Foto van ${teamName(state, ph.teamId)} goedgekeurd: +${give} pt`, ph.teamId);
+  return { ok: true, teamId: ph.teamId, pointName: ph.pointName, approve, points: give, max };
 }
 
 // ---- verborgen schatten ----
@@ -421,6 +427,7 @@ function teamView(state, team) {
     team: { id: team.id, name: team.name, color: team.color },
     settings: { title: state.settings.title, testMode: state.settings.testMode, started: state.settings.started, hintCost: state.settings.hintCost, showMap: !!state.settings.showMap },
     wrongPenalty: WRONG_PENALTY, possible, maxTotal,
+    pendingPhotos: state.photos.filter(f => f.teamId === team.id && f.status === 'wacht').reduce((s, f) => s + (f.max || 0), 0),
     index: done.length, total: r.length, point,
     arrived: !!res.arrivedAt, tries: res.tries || 0, maxTries: MAX_TRIES,
     done, letters, jokers: pr.jokers || 0, mistUntil: pr.mistUntil || 0,

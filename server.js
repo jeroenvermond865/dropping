@@ -223,7 +223,9 @@ app.post('/api/photo', express.json({ limit: '6mb' }), teamAuth, async (req, res
   const out = game.submitPhoto(req.d, req.team, photoId);
   if (out.error) return res.status(400).json(out);
   changed(req.d);
-  res.json(out);
+  // Meteen een venster in het beheer om de foto te beoordelen
+  io.to('admin:' + req.d.id).emit('newPhoto', { ...out.photo, teamName: req.team.name });
+  res.json({ ok: true, letter: out.letter });
 });
 
 app.get('/foto/:id', async (req, res) => {
@@ -399,9 +401,10 @@ app.post('/api/admin/routegen/apply', adminAuth, (req, res) => {
 });
 
 app.post('/api/admin/photo/:id', adminAuth, (req, res) => {
-  const out = game.judgePhoto(req.d, req.params.id, !!req.body.approve);
+  const out = game.judgePhoto(req.d, req.params.id, !!req.body.approve, req.body.points === undefined ? undefined : num(req.body.points, 0));
   if (out.error) return res.status(400).json(out);
   changed(req.d);
+  io.to('team:' + out.teamId).emit('photoJudged', out);
   res.json(out);
 });
 

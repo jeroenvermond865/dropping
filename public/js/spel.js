@@ -29,6 +29,10 @@
   // ---- live verbinding ----
   const socket = io({ auth: { token } });
   socket.on('view', v => render(v));
+  socket.on('photoJudged', r => {
+    if (r.approve) { App.confetti(); App.buzz([50, 50, 50, 50, 200]); }
+    choose(r.approve ? `📸 Foto goedgekeurd! Jullie krijgen ${r.points} van de ${r.max} punten voor "${r.pointName}".` : `📸 De foto bij "${r.pointName}" is helaas afgekeurd. Geen punten.`, [{ label: r.approve ? '🎉 Top!' : 'Jammer', value: 1 }]);
+  });
   socket.on('mist', ({ from }) => { App.toast(`🌫️ ${from} stuurt mist! Even geen kaart…`, 'bad'); App.buzz([100, 50, 100]); });
 
   App.api('/api/me').then(render).catch(e => {
@@ -96,12 +100,32 @@
     document.querySelectorAll('[data-arrow]').forEach(a => { a.style.transform = `rotate(${b - h}deg)`; });
   }
 
+  // Zonder kaart: bij een schat in de buurt alleen het stukje kaart tussen jou en de schat laten zien.
+  function nearTreasure() {
+    if (!view || !me) return null;
+    return (view.treasures || []).filter(t => !t.claimed).map(t => ({ ...t, d: App.distance(me, t) })).sort((a, b) => a.d - b.d)[0] || null;
+  }
+  const treasureLine = L.polyline([], { color: '#ffc44d', weight: 3, dashArray: '4 8' });
+  function treasureWindow() {
+    const pane = map.getPane('tilePane');
+    if (!view || view.settings.showMap) { pane.style.clipPath = ''; treasureLine.remove(); return; }
+    const t = nearTreasure();
+    if (!t) { tileLayer.remove(); treasureLine.remove(); pane.style.clipPath = ''; return; }
+    tileLayer.addTo(map);
+    treasureLine.setLatLngs([[me.lat, me.lng], [t.lat, t.lng]]).addTo(map);
+    const a = map.latLngToLayerPoint([t.lat, t.lng]), b = map.latLngToLayerPoint([me.lat, me.lng]);
+    const c = a.add(b).divideBy(2), r = a.distanceTo(b) / 2 + 70;
+    pane.style.clipPath = `circle(${Math.round(r)}px at ${Math.round(c.x)}px ${Math.round(c.y)}px)`;
+  }
+  map.on('zoom move zoomend moveend', treasureWindow);
+
   // Kaartbeeld passend maken; zonder kaart blijft er boven ruimte voor het kompas en onder voor de vraag.
   let lastFit = 0;
   function fitView() {
     if (!view || !view.point) return;
     lastFit = Date.now();
-    const pts = [...(view.point.leg || []), [view.point.lat, view.point.lng], ...(me ? [[me.lat, me.lng]] : [])];
+    const t = !view.settings.showMap && nearTreasure();
+    const pts = [...(view.point.leg || []), [view.point.lat, view.point.lng], ...(me ? [[me.lat, me.lng]] : []), ...(t ? [[t.lat, t.lng]] : [])];
     const nomap = !view.settings.showMap;
     const top = nomap ? Math.max(...[...$('compassOnly').children].map(c => c.getBoundingClientRect().bottom)) + 10 : 60;
     const bottom = nomap ? innerHeight - $('sheet').getBoundingClientRect().top + 10 : 60;
@@ -111,6 +135,7 @@
   function updateNav() {
     if (!view) return;
     if (Date.now() - lastFit > 15000) fitView();
+    treasureWindow();
     const p = view.point;
     let d = null;
     if (p && me) d = App.distance(me, p);
@@ -162,6 +187,7 @@
     // Zonder kaart: geen straten, alleen het stukje route naar het volgende punt
     document.querySelector('.game').classList.toggle('nomap', !showMap);
     if (showMap) tileLayer.addTo(map); else tileLayer.remove();
+    treasureWindow();
     layerControl.getContainer().style.display = showMap ? '' : 'none';
     const compassOnly = v.point && (!showMap || (v.point.kompas && !v.arrived));
     $('navCard').style.display = v.point && !compassOnly ? '' : 'none';
@@ -206,7 +232,8 @@
     for (const p of v.paths || []) L.polyline(p.line, { color: '#ffc44d', weight: 3, opacity: 0.6, dashArray: '4 8' }).addTo(treasureLayer);
     const ids = (v.treasures || []).filter(t => !t.claimed).map(t => t.id);
     if (knownTreasures && ids.some(i => !knownTreasures.includes(i))) {
-      App.toast('💎 Er ligt een schat in de buurt! Kijk op de kaart.', 'good');
+      App.toast(v.settings.showMap ? '💎 Er ligt een schat in de buurt! Kijk op de kaart.' : '💎 Schat in de buurt! Een stukje kaart laat zien waar hij ligt.', 'good');
+      lastFit = 0;
       App.buzz([80, 60, 80, 60, 200]);
     }
     knownTreasures = ids;
@@ -218,7 +245,7 @@
   }
 
   function scoreHtml(v) {
-    return `<div class="muted" style="font-size:.85em">⭐ Jullie hebben <b>${v.score}</b> van de <b>${v.possible}</b> punten die tot nu toe te halen waren (hele tocht: ${v.maxTotal}).</div>`;
+    return `<div class="muted" style="font-size:.85em">⭐ Jullie hebben <b>${v.score}</b> van de <b>${v.possible}</b> punten die tot nu toe te halen waren (hele tocht: ${v.maxTotal}).${v.pendingPhotos ? ` 📸 Nog tot ${v.pendingPhotos} punten voor foto's die wachten op goedkeuring.` : ''}</div>`;
   }
 
   function lettersHtml(v) {
@@ -248,9 +275,13 @@
     if (p.type === 'keuze') {
       body += `<div class="options">${(p.options || []).map((o, i) => `<button class="opt" data-i="${i}">${String.fromCharCode(65 + i)}. ${App.esc(o)}</button>`).join('')}</div>`;
     } else if (p.type === 'foto') {
-      body += `<label class="btn block" id="photoLbl" style="cursor:pointer">📸 Foto maken
-        <input type="file" id="photoIn" accept="image/*" capture="environment" style="display:none"></label>
-        <div class="muted" style="font-size:.85em">De organisatie keurt de foto goed, daarna krijgen jullie de punten.</div>`;
+      body += `<div class="card" style="padding:12px;background:rgba(77,210,255,.1)">📸 <b>Foto-opdracht:</b> jullie punten (max ${p.points}) komen pas als de organisatie de foto heeft goedgekeurd. Dat kan meteen zijn, maar soms ook pas na afloop. Na het insturen kunnen jullie gewoon door naar het volgende punt.</div>
+        <div class="row" style="gap:8px">
+          <label class="btn grow photo-lbl" style="cursor:pointer">📸 Foto maken
+            <input type="file" class="photo-in" accept="image/*" capture="environment" style="display:none"></label>
+          <label class="btn ghost grow photo-lbl" style="cursor:pointer">🖼️ Uit galerij
+            <input type="file" class="photo-in" accept="image/*" style="display:none"></label>
+        </div>`;
     } else if (p.type === 'opdracht') {
       body += `<button class="btn block" id="doneBtn">✅ Gedaan!</button>`;
     } else {
@@ -263,7 +294,7 @@
     s.innerHTML = body;
     s.querySelectorAll('.opt').forEach(b => { b.onclick = () => send(b.dataset.i); });
     if ($('doneBtn')) $('doneBtn').onclick = () => send('gedaan');
-    if ($('photoIn')) $('photoIn').onchange = e => e.target.files[0] && uploadPhoto(e.target.files[0]);
+    s.querySelectorAll('.photo-in').forEach(i => { i.onchange = e => e.target.files[0] && uploadPhoto(e.target.files[0]); });
     if ($('sendBtn')) {
       $('sendBtn').onclick = () => $('answer').value.trim() && send($('answer').value);
       $('answer').onkeydown = e => { if (e.key === 'Enter') $('sendBtn').click(); };
@@ -295,8 +326,9 @@
 
   // Foto verkleinen in de telefoon en dan versturen
   async function uploadPhoto(file) {
-    const lbl = $('photoLbl');
-    lbl.firstChild.textContent = '⏳ Foto versturen…';
+    const lbls = document.querySelectorAll('.photo-lbl');
+    const labels = [...lbls].map(l => l.firstChild.textContent);
+    lbls.forEach(l => { l.firstChild.textContent = '⏳ Versturen…'; });
     try {
       const img = await new Promise((ok, bad) => {
         const i = new Image();
@@ -311,10 +343,10 @@
       const data = c.toDataURL('image/jpeg', 0.78);
       const r = await App.api('/api/photo', { data });
       App.confetti(); App.buzz([50, 50, 200]);
-      App.toast(r.letter ? `📸 Foto verstuurd! Letter ${r.letter}` : '📸 Foto verstuurd!', 'good');
+      App.toast(r.letter ? `📸 Foto verstuurd! Letter ${r.letter}. Punten volgen na goedkeuring.` : '📸 Foto verstuurd! Punten volgen na goedkeuring.', 'good');
     } catch (e) {
       App.toast(e.message, 'bad');
-      if ($('photoLbl')) $('photoLbl').firstChild.textContent = '📸 Foto maken';
+      document.querySelectorAll('.photo-lbl').forEach((l, i) => { l.firstChild.textContent = labels[i]; });
     }
   }
 

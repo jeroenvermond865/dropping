@@ -26,6 +26,7 @@
     initMap();
     socket = io({ auth: { token: App.store.get('adminToken'), dropping: state.dropping.id } });
     socket.on('admin', s => { state = s; draw(); if (!(tab === 'punten' && selected) && !isTyping()) renderTab(); });
+    socket.on('newPhoto', ph => { App.buzz([80, 40, 80]); showPhotoModal(ph); });
     socket.on('pos', ({ teamId, lat, lng, ts }) => {
       const pr = state.progress[teamId] || (state.progress[teamId] = { results: {} });
       pr.pos = { lat, lng, ts };
@@ -439,21 +440,69 @@
   }
 
   // Foto's beoordelen
+  // ---- foto's beoordelen ----
+  const teamName = id => (state.teams.find(t => t.id === id) || {}).name || '?';
+  const fileName = p => `${teamName(p.teamId)} - ${p.pointName}.jpg`.replace(/[\\/:*?"<>|]/g, '');
+
+  // Schuifje van 0 tot het maximum van het punt, met goed- en afkeurknop
+  function judgeHtml(p) {
+    const max = p.max ?? 100;
+    const val = p.status === 'goed' ? p.points ?? max : max;
+    return `<div><label>Punten: <b data-val="${p.id}">${val}</b> van ${max}</label>
+      <input type="range" min="0" max="${max}" step="5" value="${val}" data-slider="${p.id}" style="width:100%"></div>
+      <div class="row" style="gap:8px">
+        <button class="btn grow" data-ok="${p.id}">✅ ${p.status === 'goed' ? 'Punten aanpassen' : 'Goedkeuren'}</button>
+        <button class="btn danger" data-no="${p.id}">❌ Afkeuren</button></div>`;
+  }
+
+  function bindJudge(root, done) {
+    root.querySelectorAll('[data-slider]').forEach(s => { s.oninput = () => { root.querySelector(`[data-val="${s.dataset.slider}"]`).textContent = s.value; }; });
+    root.querySelectorAll('[data-ok],[data-no]').forEach(b => {
+      b.onclick = async () => {
+        const id = b.dataset.ok || b.dataset.no;
+        const slider = root.querySelector(`[data-slider="${id}"]`);
+        try {
+          const r = await api('/api/admin/photo/' + id, { approve: !!b.dataset.ok, points: slider ? Number(slider.value) : undefined });
+          App.toast(r.approve ? `✅ Goedgekeurd: +${r.points} punten` : '❌ Afgekeurd', r.approve ? 'good' : 'bad');
+          if (done) done();
+        } catch (e) { App.toast(e.message, 'bad'); }
+      };
+    });
+  }
+
+  function showPhotoModal(ph) {
+    const m = $('photoModal'), c = $('photoModalCard');
+    c.innerHTML = `<h3>📸 Nieuwe foto van ${esc(ph.teamName || teamName(ph.teamId))}</h3>
+      <div class="muted">${esc(ph.pointName)}</div>
+      <img src="/foto/${ph.id}" style="width:100%;max-height:50vh;object-fit:contain;border-radius:10px;background:#000">
+      ${judgeHtml(ph)}
+      <button class="btn ghost block" id="pmLater">Later beoordelen (staat bij Foto's)</button>`;
+    const close = () => m.classList.remove('show');
+    bindJudge(c, close);
+    $('pmLater').onclick = close;
+    m.onclick = e => { if (e.target === m) close(); };
+    m.classList.add('show');
+  }
+
   function renderPhotos() {
     const el = $('tab');
-    const name = id => esc((state.teams.find(t => t.id === id) || {}).name || '?');
-    const label = { wacht: '⏳ wacht', goed: '✅ goed', afgekeurd: '❌ afgekeurd' };
-    el.innerHTML = `<p class="muted" style="font-size:.85em">Goedgekeurde foto's komen in het <a href="/album" target="_blank">album</a> en op het tv-scherm.</p>
+    const label = { wacht: '⏳ wacht op beoordeling', goed: '✅ goedgekeurd', afgekeurd: '❌ afgekeurd' };
+    el.innerHTML = `<p class="muted" style="font-size:.85em">Goedgekeurde foto's komen in het <a href="/album" target="_blank">album</a> en op het tv-scherm. Alle foto's blijven hier bewaard om te downloaden.</p>
+      ${state.photos.length ? '<button class="btn ghost block" id="dlAll">⬇️ Alle foto\'s downloaden</button>' : ''}
       ${[...state.photos].sort((a, b) => (a.status === 'wacht' ? 0 : 1) - (b.status === 'wacht' ? 0 : 1)).map(p => `
-        <div class="card" style="padding:10px;margin-bottom:10px">
+        <div class="card stack" style="padding:10px;margin:10px 0">
           <a href="/foto/${p.id}" target="_blank"><img src="/foto/${p.id}" loading="lazy" style="width:100%;border-radius:10px;display:block;max-height:260px;object-fit:cover"></a>
-          <div class="row" style="margin-top:8px"><div class="grow"><b>${name(p.teamId)}</b> · ${esc(p.pointName)}<div class="muted" style="font-size:.8em">${label[p.status]}</div></div>
-          ${p.status !== 'goed' ? `<button class="btn small" data-ok="${p.id}">Goed</button>` : ''}
-          ${p.status !== 'afgekeurd' ? `<button class="btn danger small" data-no="${p.id}">Af</button>` : ''}</div>
+          <div class="row"><div class="grow"><b>${esc(teamName(p.teamId))}</b> · ${esc(p.pointName)}
+            <div class="muted" style="font-size:.8em">${label[p.status]}${p.status === 'goed' ? ` · ${p.points ?? p.max} pt` : ''}</div></div>
+            <a class="btn ghost small" href="/foto/${p.id}" download="${esc(fileName(p))}">⬇️</a></div>
+          ${judgeHtml(p)}
         </div>`).join('') || '<p class="muted">Nog geen foto\'s.</p>'}`;
-    el.querySelectorAll('[data-ok],[data-no]').forEach(b => {
-      b.onclick = () => api('/api/admin/photo/' + (b.dataset.ok || b.dataset.no), { approve: !!b.dataset.ok }).catch(e => App.toast(e.message, 'bad'));
-    });
+    bindJudge(el);
+    if ($('dlAll')) $('dlAll').onclick = () => state.photos.forEach((p, i) => setTimeout(() => {
+      const a = document.createElement('a');
+      a.href = '/foto/' + p.id; a.download = fileName(p);
+      document.body.appendChild(a); a.click(); a.remove();
+    }, i * 600));
   }
 
   function renderPointForm(p) {

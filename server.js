@@ -114,6 +114,8 @@ function defaultPin(d) {
   return String(Math.floor(1000 + Math.random() * 9000));
 }
 
+// Hoofdletters en spaties tellen niet mee, zodat ook een teamnaam als wachtwoord werkt.
+const samePin = (a, b) => String(a ?? '').replace(/\s+/g, '').toLowerCase() === String(b ?? '').replace(/\s+/g, '').toLowerCase();
 const clean = (v, max = 500) => String(v ?? '').slice(0, max);
 const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
 
@@ -131,7 +133,7 @@ app.get('/api/scoreboard', (req, res) => res.json(publicScore(req.d)));
 
 app.post('/api/login', (req, res) => {
   const team = req.d.teams.find(t => t.id === req.body.teamId);
-  if (!team || String(team.pin).toLowerCase() !== String(req.body.pin || '').trim().toLowerCase()) return res.status(401).json({ error: 'Pincode klopt niet.' });
+  if (!team || !samePin(team.pin, req.body.pin)) return res.status(401).json({ error: 'Pincode klopt niet.' });
   res.json({ token: newToken({ type: 'team', teamId: team.id, droppingId: req.d.id }), team: { id: team.id, name: team.name }, dropping: { id: req.d.id, name: req.d.settings.title } });
 });
 
@@ -384,7 +386,7 @@ app.post('/api/admin/team', adminAuth, (req, res) => {
   const team = {
     id: b.id && req.d.teams.some(t => t.id === b.id) ? b.id : game.id('t'),
     name: clean(b.name, 40) || 'Team',
-    pin: clean(b.pin, 12).trim() || req.d.teams.find(t => t.id === b.id)?.pin || defaultPin(req.d),
+    pin: clean(b.pin, 40).trim() || req.d.teams.find(t => t.id === b.id)?.pin || defaultPin(req.d),
     color: /^#[0-9a-f]{6}$/i.test(b.color) ? b.color : '#4dd2ff',
     offset: Math.max(0, Math.floor(num(b.offset, 0))),
   };
@@ -572,7 +574,7 @@ function migrateDb(raw) {
   db = migrateDb(await store.init());
   store.save(db);
   server.listen(PORT, () => console.log(`Dropping draait op poort ${PORT} (${store.usesDatabase() ? 'Postgres' : 'bestand'})`));
-  require('./inspect')(db);
+  require('./avond')(db, store.save);
 })();
 
 for (const sig of ['SIGTERM', 'SIGINT']) {

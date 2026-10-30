@@ -177,7 +177,7 @@
       if (pr.trail?.length > 1) L.polyline(pr.trail.map(c => [c[0], c[1]]), { color: t.color, weight: 3, opacity: 0.7 }).addTo(layers.teams);
       const ago = Math.round((Date.now() - pos.ts) / 60000);
       L.marker([pos.lat, pos.lng], {
-        icon: L.divIcon({ className: '', html: `<div class="team-marker" style="background:${esc(t.color)}"></div>`, iconSize: [22, 22], iconAnchor: [11, 11] }),
+        icon: L.divIcon({ className: '', html: `<div class="team-marker" style="background:${esc(t.color)};color:${esc(t.color)}"></div>`, iconSize: [22, 22], iconAnchor: [11, 11] }),
         zIndexOffset: 1000,
       }).bindTooltip(`${esc(t.name)} · ${ago} min geleden`, { permanent: true, direction: 'right' }).addTo(layers.teams);
     }

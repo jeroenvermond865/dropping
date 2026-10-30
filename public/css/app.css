@@ -207,7 +207,10 @@ input[type=color] { padding: 2px; height: 42px; }
 .next-marker { font-size: 30px; line-height: 1; filter: drop-shadow(0 0 10px rgba(62, 224, 143, .9)); }
 .prev-marker { width: 12px; height: 12px; border-radius: 50%; background: #8a93b8; border: 2px solid #fff; }
 .next-label { background: rgba(5, 8, 20, .85) !important; color: #fff !important; border: 1px solid #3ee08f !important; font-weight: 700; }
-.team-marker { width: 22px; height: 22px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 0 12px rgba(0, 0, 0, .6); }
+.team-marker { position: relative; width: 22px; height: 22px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 0 12px rgba(0, 0, 0, .6); }
+/* Knipperende ring in de teamkleur, zodat je ziet dat het team live is */
+.team-marker::after { content: ""; position: absolute; inset: -3px; border-radius: 50%; border: 3px solid currentColor; animation: team-ring 1.6s ease-out infinite; }
+@keyframes team-ring { from { transform: scale(1); opacity: .9; } to { transform: scale(2.8); opacity: 0; } }
 .leaflet-container { font: inherit; background: #0b1020; }
 .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--bg2); color: var(--text); }
 .mode-banner .btn.ghost { color: #222; border-color: rgba(0, 0, 0, .3); }

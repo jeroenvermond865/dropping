@@ -144,7 +144,7 @@
     const c = a.add(b).divideBy(2), r = a.distanceTo(b) / 2 + 70;
     pane.style.clipPath = `circle(${Math.round(r)}px at ${Math.round(c.x)}px ${Math.round(c.y)}px)`;
   }
-  map.on('zoom move zoomend moveend', treasureWindow);
+  map.on('zoom move zoomend moveend', () => { try { treasureWindow(); } catch (e) { reportError('schatvenster: ' + e.message); } });
 
   // Kaartbeeld passend maken; zonder kaart blijft er boven ruimte voor het kompas en onder voor de vraag.
   let lastFit = 0;
@@ -156,7 +156,8 @@
     const nomap = !view.settings.showMap;
     const top = nomap ? Math.max(...[...$('compassOnly').children].map(c => c.getBoundingClientRect().bottom)) + 10 : 60;
     const bottom = nomap ? innerHeight - $('sheet').getBoundingClientRect().top + 10 : 60;
-    map.fitBounds(L.latLngBounds(pts), { paddingTopLeft: [30, Math.max(60, top)], paddingBottomRight: [30, Math.max(60, bottom)], maxZoom: 17, animate: false });
+    try { map.fitBounds(L.latLngBounds(pts), { paddingTopLeft: [30, Math.max(60, top)], paddingBottomRight: [30, Math.max(60, bottom)], maxZoom: 17, animate: false }); }
+    catch (e) { reportError('kaart passen: ' + e.message); }
   }
 
   function updateNav() {
@@ -266,6 +267,7 @@
     knownTreasures = ids;
 
     renderSheet(v);
+    maybeShowRules();
     if (!lastFit) fitView();
     updateNav();
     if (prevId && v.point && prevId !== v.point.id) showReveal(v.point);
@@ -409,6 +411,24 @@
     });
   }
 
+  // ---- spelregels: bij de eerste keer en via het menu ----
+  function showRules() {
+    const m = $('modal'), c = $('modalCard');
+    c.innerHTML = App.rulesHtml(view && view.settings) + '<button class="btn block" id="rulesOk">👍 Begrepen, op pad!</button>';
+    $('rulesOk').onclick = () => m.classList.remove('show');
+    m.onclick = null;
+    m.classList.add('show');
+  }
+  let rulesShown = false;
+  function maybeShowRules() {
+    if (rulesShown || !view) return;
+    rulesShown = true;
+    const key = 'rulesSeen:' + view.team.id;
+    if (App.store.get(key) || view.finished) return;
+    App.store.set(key, '1');
+    showRules();
+  }
+
   // ---- mist sturen & menu ----
   $('jokerBtn').onclick = async () => {
     if (!view.jokers) return App.toast('Win een mist-joker door als eerste bij een punt te zijn!');
@@ -419,11 +439,13 @@
   };
   $('menuBtn').onclick = async () => {
     const c = await choose('Menu', [
-      { label: '🏆 Scorebord', value: 'score' },
+      { label: '📖 Spelregels en punten', value: 'regels' },
+      ...(view.finished ? [{ label: '🏆 Scorebord', value: 'score' }] : []),
       ...(compassOn ? [] : [{ label: '🧭 Kompas aanzetten', value: 'kompas' }]),
       ...(view.settings.testMode ? [{ label: '🔄 Opnieuw beginnen (testmodus)', value: 'reset' }] : []),
       { label: '🚪 Uitloggen', value: 'uit', danger: true },
     ]);
+    if (c === 'regels') showRules();
     if (c === 'score') location.href = '/scorebord';
     if (c === 'kompas') enableCompass();
     if (c === 'reset' && await choose('Alle punten en de score van jullie team wissen en opnieuw beginnen?', [{ label: '🔄 Ja, opnieuw beginnen', value: 1, danger: true }]) === 1) {

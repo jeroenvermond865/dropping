@@ -114,5 +114,32 @@ const App = (() => {
 
   function buzz(pattern) { try { navigator.vibrate && navigator.vibrate(pattern); } catch {} }
 
-  return { store, api, droppingId, toast, distance, bearing, inPolygon, fmtDist, fmtTime, esc, tileLayers, confetti, buzz };
+  // Uitleg van het spel en de puntentelling, voor spelers en het tv-scherm
+  function rulesHtml(s = {}) {
+    const hint = s.hintCost ?? 20;
+    return `<div class="rules">
+      <h3>🗺️ Zo werkt de dropping</h3>
+      <ol>
+        <li>De <b>kompaspijl</b> wijst naar het volgende punt; de lijn laat het stukje route ernaartoe zien. Een kaart is er niet!</li>
+        <li>Ben je bij het punt (binnen ±35 m), druk dan op <b>Inchecken</b>. Dan krijg je de vraag of opdracht.</li>
+        <li>Klaar? Dan pas zie je het volgende stukje route. De laatste stop is de <b>finish</b>.</li>
+        <li>Blijf uit de <b>verboden gebieden</b>: je telefoon trilt en waarschuwt als je erin loopt.</li>
+      </ol>
+      <h3>⭐ Punten</h3>
+      <ul>
+        <li><b>Aankomen</b> bij een punt: 50 punten (met meer teams: 1e 50, 2e 30, daarna 20).</li>
+        <li><b>Goed antwoord</b>: de punten van die vraag (meestal 100).</li>
+        <li><b>Fout antwoord</b>: −10 per fout. Na 3 fouten ga je door met 0 punten voor die vraag. Je gaat nooit onder nul.</li>
+        <li><b>Hint</b>: kost ${hint} punten.</li>
+        <li><b>Foto-opdracht</b>: punten komen pas als de organisatie de foto goedkeurt (soms meteen, soms na afloop).</li>
+        <li><b>Verborgen schatten</b> 💎: binnen 100 m zie je een stukje kaart, binnen 25 m pak je hem. Eerste vinder krijgt alles.</li>
+        <li><b>Finish</b>: 100 punten extra voor het eerste team binnen (daarna 60 en 30).</li>
+      </ul>
+      <h3>🔤 Codewoord</h3>
+      <p>Bij veel goede antwoorden krijg je een letter. Bij de finish husselen jullie alle letters tot één woord.</p>
+      <p class="muted">🏆 Het scorebord zie je pas bij de finish. Spannend!</p>
+    </div>`;
+  }
+
+  return { rulesHtml, store, api, droppingId, toast, distance, bearing, inPolygon, fmtDist, fmtTime, esc, tileLayers, confetti, buzz };
 })();

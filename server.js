@@ -156,11 +156,20 @@ app.get('/api/me', teamAuth, (req, res) => res.json(game.teamView(req.d, req.tea
 
 function teamAction(fn) {
   return [teamAuth, (req, res) => {
+    const wasDone = !!game.progressOf(req.d, req.team.id).finishedAt;
     const out = fn(req);
     if (out.error) return res.status(400).json(out);
     changed(req.d);
+    finishCheck(req.d, req.team, wasDone);
     res.json(out);
   }];
+}
+
+// Team net binnen: het scorebord als grote pop-up op de tv
+function finishCheck(d, team, wasDone) {
+  if (wasDone || !game.progressOf(d, team.id).finishedAt) return;
+  const rows = game.scoreboard(d).map(({ pos, ...r }) => r);
+  tvLive(d, team, { kind: 'finish', rows, rank: (rows.find(r => r.id === team.id) || {}).rank });
 }
 
 // Live meekijken op het tv-scherm: opdracht, antwoord, punten en foto's
@@ -250,9 +259,11 @@ app.post('/api/photo', express.json({ limit: '6mb' }), teamAuth, async (req, res
   const photoId = crypto.randomBytes(12).toString('hex');
   try { await store.savePhoto(photoId, buf); }
   catch (e) { console.error('Foto opslaan mislukt:', e.message); return res.status(500).json({ error: 'Foto opslaan mislukt, probeer opnieuw.' }); }
+  const wasDone = !!game.progressOf(req.d, req.team.id).finishedAt;
   const out = game.submitPhoto(req.d, req.team, photoId);
   if (out.error) return res.status(400).json(out);
   changed(req.d);
+  setTimeout(() => finishCheck(req.d, req.team, wasDone), 1500);
   // Meteen een venster in het beheer om de foto te beoordelen
   io.to('admin:' + req.d.id).emit('newPhoto', { ...out.photo, teamName: req.team.name });
   tvLive(req.d, req.team, { kind: 'foto', photoId: out.photo.id, point: { name: out.photo.pointName }, max: out.photo.max });

@@ -48,6 +48,14 @@
   .live-pop .lp-good { font: 700 1.3rem "Space Grotesk", sans-serif; color: var(--good); }
   .live-pop .lp-bad { font: 700 1.3rem "Space Grotesk", sans-serif; color: var(--bad); }
   .live-pop .lp-meta { color: var(--muted); font-size: .9rem; }
+  .big-pop { position: absolute; inset: 90px 40px 90px; z-index: 25; overflow: auto; background: rgba(8, 13, 30, .96); border: 1px solid var(--accent);
+    border-radius: 24px; padding: 26px 32px; box-shadow: 0 0 80px rgba(77, 210, 255, .35); opacity: 0; transform: scale(.94); transition: opacity .6s, transform .6s; pointer-events: none; font-size: 1.15rem; }
+  .big-pop.show { opacity: 1; transform: none; }
+  .big-pop .rules { columns: 2; column-gap: 34px; }
+  .big-pop .rules h3 { break-after: avoid; font-size: 1.4rem; }
+  .big-pop h2 { font-size: 2.2rem; margin: 0 0 6px; }
+  .big-pop .fin-row { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border-radius: 14px; background: rgba(255, 255, 255, .05); margin-top: 10px; font-size: 1.4rem; animation: slideIn .6s both; }
+  .big-pop .fin-row .sc { margin-left: auto; font: 700 2rem "Space Grotesk", sans-serif; }
   .live-pop img { width: 100%; max-height: 300px; object-fit: cover; border-radius: 12px; }
   @keyframes beacon { 70% { box-shadow: 0 0 0 26px rgba(255, 255, 255, 0); } 0% { box-shadow: 0 0 0 0 rgba(255, 255, 255, .6); } }
   .leaflet-control-attribution { opacity: .4; }
@@ -67,9 +75,11 @@
     <div class="tv-tilt"><div id="map"></div></div>
     <div class="tv-title"><h1 class="logo" id="title">Dropping</h1><span class="pill" id="live" style="color:var(--good)">● live</span> <span class="pill" id="camLabel">🎥 Overzicht</span></div>
     <div class="live-pop" id="livePop"></div>
+    <div class="big-pop" id="bigPop"></div>
     <div class="tv-clock">
       <button class="btn" id="replayBtn">▶ Replay van de routes</button>
       <span class="hud-chip" id="replayClock" style="display:none"></span>
+      <button class="btn ghost small" id="rulesBtn">📖 Uitleg</button>
       <button class="btn ghost small" id="fsBtn">⛶ Volledig scherm</button>
     </div>
   </div>

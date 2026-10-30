@@ -493,6 +493,7 @@ function adminView(state) {
 function tvView(state) {
   return {
     title: state.settings.title,
+    settings: { hintCost: state.settings.hintCost },
     teams: state.teams.map(t => {
       const pr = state.progress[t.id] || {};
       return { id: t.id, name: t.name, color: t.color, pos: pr.pos || null, trail: pr.trail || [] };

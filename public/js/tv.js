@@ -192,6 +192,8 @@
   // Blijft 45 seconden staan, of tot er iets nieuws gebeurt.
   let liveTimer;
   function showLive(ev) {
+    if (ev.kind === 'finish') return showFinish(ev);
+    hideBig();
     const el = $('livePop');
     const p = ev.point || {};
     const head = `<div class="lp-team"><span class="dot" style="background:${esc(ev.team.color)}"></span> ${esc(ev.team.name)}</div>`;
@@ -226,8 +228,41 @@
     liveTimer = setTimeout(() => { el.classList.remove('show'); popOpen = false; nextShot(); }, 45000);
   }
 
+  // ---- grote pop-ups: uitleg van het spel en het scorebord bij de finish ----
+  let bigTimer;
+  function showBig(html, ms) {
+    const el = $('bigPop');
+    el.innerHTML = html;
+    el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
+    clearTimeout(bigTimer);
+    bigTimer = setTimeout(() => el.classList.remove('show'), ms);
+  }
+  const hideBig = () => { clearTimeout(bigTimer); $('bigPop').classList.remove('show'); };
+  function showRules(ms = 40000) { showBig(App.rulesHtml(data && data.settings), ms); }
+  $('rulesBtn').onclick = () => ($('bigPop').classList.contains('show') ? hideBig() : showRules(60000));
+  // Voor de start staat de uitleg in beeld; daarna af en toe nog eens als er niets gebeurt
+  let lastRules = 0;
+  setInterval(() => {
+    if (!data || replay || $('bigPop').classList.contains('show')) return;
+    const started = data.scoreboard.some(r => r.done > 0) || data.teams.some(isLive);
+    if (!started || (!popOpen && Date.now() - lastRules > 10 * 60000)) { lastRules = Date.now(); showRules(started ? 40000 : 30000); }
+  }, 5000);
+
+  function showFinish(ev) {
+    const medals = ['🥇', '🥈', '🥉'];
+    showBig(`<h2>🏁 ${esc(ev.team.name)} is binnen!</h2>
+      <div class="muted" style="font-size:1.2rem">Plek ${ev.rank} · het scorebord van dit moment:</div>
+      ${ev.rows.map((r, i) => `<div class="fin-row" style="border-left:6px solid ${esc(r.color)};animation-delay:${i * .25}s">
+        <span style="font-size:2rem">${medals[r.rank - 1] || r.rank}</span><b>${esc(r.name)}</b>${r.finishedAt ? ' 🏁' : ` <span class="muted" style="font-size:1rem">(${r.done}/${r.total} punten)</span>`}
+        <span class="sc">${r.score}</span></div>`).join('')}`, 45000);
+    App.confetti();
+  }
+
   const prevRank = {};
+  // Punten blijven geheim tot het eerste team binnen is
+  const revealed = () => data.scoreboard.some(r => r.finishedAt);
   function renderBoard() {
+    const open = revealed();
     $('board').innerHTML = data.scoreboard.map(r => {
       const up = prevRank[r.id] && prevRank[r.id] > r.rank;
       return `<div class="tv-row ${up ? 'flash' : ''}" style="border-left:5px solid ${esc(r.color)}">
@@ -235,7 +270,7 @@
         <div class="grow"><b style="font-size:1.15rem">${esc(r.name)}</b>${r.finishedAt ? ' 🏁' : ''}
           <div class="bar"><div style="width:${r.total ? (r.done / r.total) * 100 : 0}%;background:${esc(r.color)}"></div></div>
           <div class="muted" style="font-size:.8rem">${r.done}/${r.total} punten · ✅ ${r.solved} · 🥇 ${r.firsts} · 💎 ${r.treasures}</div></div>
-        <div class="sc">${r.score}</div></div>`;
+        <div class="sc">${open ? r.score : '🔒'}</div></div>`;
     }).join('') || '<p class="muted">Nog geen teams</p>';
     data.scoreboard.forEach(r => { prevRank[r.id] = r.rank; });
   }

@@ -13,6 +13,12 @@
 <main class="board">
   <div class="row"><a href="/" class="grow">← Terug</a><span class="pill" id="live">● live</span></div>
   <h1 class="logo" style="margin-top:14px" id="title">Scorebord</h1>
+  <div class="card" id="locked" style="display:none;text-align:center;padding:30px 18px">
+    <div style="font-size:3rem">🔒</div>
+    <h2>Nog even geduld!</h2>
+    <p class="muted">Het scorebord wordt onthuld bij de finish.</p>
+  </div>
+  <div id="board">
   <div class="podium" id="podium"></div>
   <div class="card table-scroll">
     <table class="score-table">
@@ -21,13 +27,26 @@
     </table>
   </div>
   <p class="muted" style="font-size:.85em">🥇 eerste bij een punt (50, 30, 20 pt) · ✅ goed antwoord (tot 100 pt, minder bij meer pogingen of een hint) · ⚡ snelste antwoord +25 · finish 100/60/30 pt</p>
+  </div>
 </main>
 <script src="/socket.io/socket.io.js"></script>
 <script src="/js/common.js"></script>
 <script>
 const prev = {};
-function render({ title, rows }) {
+// Het scorebord blijft geheim tot de finish: voor een speler tot zijn eigen team binnen is,
+// voor anderen tot het eerste team binnen is. Het beheer ziet het altijd.
+let myTeam = null;
+const isAdmin = !!App.store.get('adminToken');
+let last = null;
+if (App.store.get('teamToken')) App.api('/api/me').then(v => { myTeam = v; if (last) render(last); }).catch(() => {});
+function render(data) {
+  last = data;
+  const { title, rows } = data;
   document.getElementById('title').textContent = title + ' 🏆';
+  const open = isAdmin || (myTeam ? myTeam.finished : rows.some(r => r.finishedAt));
+  document.getElementById('locked').style.display = open ? 'none' : '';
+  document.getElementById('board').style.display = open ? '' : 'none';
+  if (!open) return;
   const order = [1, 0, 2], heights = [130, 90, 65], medals = ['🥇', '🥈', '🥉'];
   document.getElementById('podium').innerHTML = order.filter(i => rows[i]).map(i => `
     <div class="step"><div class="name">${App.esc(rows[i].name)}</div>
